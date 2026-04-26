@@ -1,0 +1,21 @@
+{
+  "profiles": {
+    "personal": {
+      "displayName": "Sean — Personal",
+      "email": "sean.fleming@gmail.com",
+      "timezone": "America/New_York",
+      "obsidianSubfolder": "Personal",
+      "tools": ["gmail", "calendar", "notion", "obsidian"],
+      "envPrefix": "PERSONAL"
+    },
+    "work": {
+      "displayName": "Sean — Work",
+      "email": "seanafleming2003@gmail.com",
+      "timezone": "America/New_York",
+      "obsidianSubfolder": "Work",
+      "tools": ["gmail", "calendar", "notion"],
+      "envPrefix": "WORK"
+    }
+  },
+  "defaultProfile": "personal"
+}

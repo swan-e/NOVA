@@ -1,0 +1,26 @@
+# Dependencies
+node_modules
+
+# Build output
+dist/
+build/
+tsconfig.tsbuildinfo
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+
+# Local MCP & Claude Configs
+.mcp.json
+.claude/
+
+# Docker Local Files
+docker-compose.override.yml
+
+# OS & editor
+.DS_Store
+Thumbs.db
+*.log
+
+data/

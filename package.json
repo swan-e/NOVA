@@ -1,0 +1,31 @@
+{
+  "name": "nova-mcp",
+  "version": "1.0.0",
+  "description": "Personal MCP server for Claude Code",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node build/index.js",
+    "clean": "rimraf build"
+  },
+  "dependencies": {
+    "@googleapis/calendar": "^14.2.0",
+    "@googleapis/gmail": "^16.1.1",
+    "@googleapis/sheets": "^13.0.1",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@notionhq/client": "^2.2.15",
+    "dotenv": "^16.4.5",
+    "google-auth-library": "^10.6.2",
+    "googleapis-common": "^8.0.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "gts": "^7.0.0",
+    "rimraf": "^5.0.0",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.4.5"
+  }
+}

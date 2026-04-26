@@ -1,0 +1,82 @@
+{
+  "sleep": {
+    "defaultBedtime": "23:00",
+    "defaultWakeTime": "07:00",
+    "minimumHours": 7,
+    "windDownBufferMinutes": 30,
+    "notes": "Wind down buffer blocks time before bedtime for quiet time"
+  },
+
+  "meals": {
+    "breakfast": {
+      "enabled": true,
+      "windowStart": "07:00",
+      "windowEnd": "09:00",
+      "durationMinutes": 30,
+      "notes": "Blocked as unavailable for tasks during this window"
+    },
+    "lunch": {
+      "enabled": true,
+      "windowStart": "11:30",
+      "windowEnd": "13:30",
+      "durationMinutes": 45,
+      "notes": "Exact timing floats within window based on schedule"
+    },
+    "dinner": {
+      "enabled": true,
+      "windowStart": "17:30",
+      "windowEnd": "19:30",
+      "durationMinutes": 60,
+      "notes": "Falls inside protected evening window"
+    },
+    "snacks": {
+      "enabled": true,
+      "intervalHours": 3,
+      "durationMinutes": 15,
+      "notes": "Auto-inserted if gap between meals exceeds intervalHours"
+    }
+  },
+
+  "overrides": {
+    "active": [],
+    "notes": "Claude writes temporary overrides here. Each entry has a type, scope (day/week/forward), date or fromDate, and the changed values. Expired day/week overrides are cleaned up automatically on Sunday planning."
+  },
+
+  "overrideSchema": {
+    "notes": "Reference only — shows the shape of an override entry",
+    "example": [
+      {
+        "id": "auto-generated-uuid",
+        "type": "sleep",
+        "scope": "day",
+        "date": "2025-03-25",
+        "bedtime": "01:00",
+        "wakeTime": "09:00",
+        "reason": "Late night out",
+        "createdAt": "2025-03-24T20:00:00"
+      },
+      {
+        "id": "auto-generated-uuid",
+        "type": "meal",
+        "meal": "breakfast",
+        "scope": "forward",
+        "fromDate": "2025-03-24",
+        "windowStart": "08:00",
+        "windowEnd": "10:00",
+        "reason": "Shifted morning routine",
+        "createdAt": "2025-03-24T07:00:00"
+      },
+      {
+        "id": "auto-generated-uuid",
+        "type": "meal",
+        "meal": "lunch",
+        "scope": "week",
+        "weekOf": "2025-03-24",
+        "windowStart": "14:00",
+        "windowEnd": "15:00",
+        "reason": "Busy week",
+        "createdAt": "2025-03-23T18:00:00"
+      }
+    ]
+  }
+}

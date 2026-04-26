@@ -1,0 +1,46 @@
+{
+  "taskWindows": [
+    {
+      "start": "09:00",
+      "end": "12:00",
+      "weight": "high",
+      "label": "focused work",
+      "notes": "Good for deep work and focused tasks"
+    },
+    {
+      "start": "13:00",
+      "end": "15:00",
+      "weight": "prime",
+      "label": "early afternoon",
+      "notes": "Sweet spot — preferred slot for all tasks"
+    },
+    {
+      "start": "15:00",
+      "end": "17:00",
+      "weight": "medium",
+      "label": "lighter afternoon",
+      "notes": "Admin, reviews, lighter cognitive tasks"
+    }
+  ],
+  "protectedWindows": [
+    {
+      "start": "17:00",
+      "end": "23:59",
+      "label": "evening — free time",
+      "overridable": true,
+      "notes": "Protected by default. Only override if you explicitly ask."
+    },
+    {
+      "start": "00:00",
+      "end": "08:00",
+      "label": "morning buffer",
+      "overridable": false,
+      "notes": "Never schedule tasks here"
+    }
+  ],
+  "taskPlacementOrder": "priority_then_time",
+  "slotGranularityMinutes": 30,
+  "downtimeBufferMinutes": 30,
+  "maxDailyTaskHours": 6,
+  "notes": "Bias toward prime (early afternoon) slots first, then high, then medium. Never touch protected windows unless user explicitly overrides."
+}

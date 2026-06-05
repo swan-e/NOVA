@@ -8,7 +8,7 @@ const SHEET_NAME = process.env.JOB_SHEET_NAME || "Sheet1";
 
 function resolveSpreadsheetId(worksheet?: string) {
   if (worksheet === "intern") return INTERN_SPREADSHEET_ID;
-  return FULLTIME_SPREADSHEET_ID;F
+  return FULLTIME_SPREADSHEET_ID;
 }
 
 function getSheetsClient(profileId?: string) {

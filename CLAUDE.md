@@ -60,7 +60,7 @@ Read this before every session. Never guess — follow these rules exactly.
 → Default submissionPlatform: "Company Website" unless stated otherwise
 → Default completionDate: today unless stated otherwise
 → Default status: "Completed" unless stated otherwise
-→ Required: job title, company. Include location, URL, notes when provided.
+→ Required: job title, company. Include location, URL, salary when provided.
 
 ### "Update job" / "Edit my application" / "Change status of X" / "Mark X as blocked"
 → **Google Sheets** — use `jobs_edit_application`
@@ -136,12 +136,12 @@ These words mean editing an existing job row — use `jobs_edit_application`:
 ### Jobs
 - `jobs_add_application` — log a new job application row to Google Sheets
   - Required: `job` (title), `company`, `sheetName` (e.g. "SWE", "Internships")
-  - Optional: `status` (Completed/Blocked/In Progress/Not Started), `submissionPlatform`, `location`, `completionDate` (MM/DD/YYYY), `website`, `notes`, `profile`
+  - Optional: `status` (Completed/Blocked/In Progress/Not Started), `submissionPlatform`, `location`, `completionDate` (MM/DD/YYYY), `website`, `salary`, `profile`
   - Defaults: status → "Completed", submissionPlatform → "Company Website", completionDate → today, profile → "work"
 
 - `jobs_edit_application` — edit an existing job application row in Google Sheets
   - Required: `findCompany`, `sheetName`
-  - Optional: `findJob` (narrow search), any field to update: `job`, `company`, `status`, `submissionPlatform`, `location`, `completionDate`, `website`, `notes`, `profile`
+  - Optional: `findJob` (narrow search), any field to update: `job`, `company`, `status`, `submissionPlatform`, `location`, `completionDate`, `website`, `salary`, `profile`
   - Only fields you provide will be changed — all others stay as-is
 
 ### Config

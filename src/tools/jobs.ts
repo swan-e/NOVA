@@ -2,8 +2,14 @@
 import { sheets as sheetsClient } from "@googleapis/sheets";
 import { loadProfile, getGoogleAuth } from "../lib/profiles";
 
-const SPREADSHEET_ID = process.env.JOB_SPREADSHEET_ID;
+const FULLTIME_SPREADSHEET_ID = process.env.JOB_SPREADSHEET_ID;
+const INTERN_SPREADSHEET_ID   = process.env.INTERN_SPREADSHEET_ID;
 const SHEET_NAME = process.env.JOB_SHEET_NAME || "Sheet1";
+
+function resolveSpreadsheetId(worksheet?: string) {
+  if (worksheet === "intern") return INTERN_SPREADSHEET_ID;
+  return FULLTIME_SPREADSHEET_ID;F
+}
 
 function getSheetsClient(profileId?: string) {
   const profile = loadProfile(profileId);
@@ -15,17 +21,21 @@ export async function addJobApplication(
   data: {
     job: string;
     company: string;
+    worksheet?: string;
+    sheetName?: string;
     status?: string;
     submissionPlatform?: string;
     location?: string;
     completionDate?: string;
     website?: string;
-    notes?: string;
+    salary?: string;
   },
   profileId?: string
 ) {
-  if (!SPREADSHEET_ID) throw new Error("JOB_SPREADSHEET_ID env var not set.");
+  const spreadsheetId = resolveSpreadsheetId(data.worksheet);
+  if (!spreadsheetId) throw new Error("Spreadsheet ID env var not set.");
 
+  
   const sheetName = data.sheetName ?? SHEET_NAME; 
   const sheets = getSheetsClient(profileId);
 
@@ -37,11 +47,11 @@ export async function addJobApplication(
     data.location ?? "UNKNOWN",
     data.completionDate ?? new Date().toLocaleDateString("en-US"),
     data.website ?? "UNKNOWN",
-    data.notes ?? "",
+    data.salary ?? "UNKNOWN",
   ];
 
   const response = await sheets.spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: `${sheetName}!A:H`,
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
@@ -55,6 +65,7 @@ export async function editJobApplication(
   data: {
     findCompany: string;
     findJob?: string;
+    worksheet?: string;
     sheetName?: string;
     job?: string;
     company?: string;
@@ -63,18 +74,19 @@ export async function editJobApplication(
     location?: string;
     completionDate?: string;
     website?: string;
-    notes?: string;
+    salary?: string;
   },
   profileId?: string
 ): Promise<string> {
-  if (!SPREADSHEET_ID) throw new Error("JOB_SPREADSHEET_ID env var not set.");
+  const spreadsheetId = resolveSpreadsheetId(data.worksheet);
+  if (!spreadsheetId) throw new Error("Spreadsheet ID env var not set.");
 
   const sheetName = data.sheetName ?? SHEET_NAME;
   const sheets = getSheetsClient(profileId);
 
   // Fetch all rows
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: `${sheetName}!A:H`,
   });
 
@@ -102,14 +114,14 @@ export async function editJobApplication(
     data.location          ?? existing[4] ?? "",
     data.completionDate    ?? existing[5] ?? "",
     data.website           ?? existing[6] ?? "",
-    data.notes             ?? existing[7] ?? "",
+    data.salary             ?? existing[7] ?? "",
   ];
 
   // rowIndex is 0-based, Sheets rows are 1-based, +1 for header
   const sheetRow = rowIndex + 1;
 
   await sheets.spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: `${sheetName}!A${sheetRow}:H${sheetRow}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [updated] },

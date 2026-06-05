@@ -537,7 +537,8 @@ server.tool(
     location:           z.string().optional(),
     completionDate:     z.string().optional().describe("MM/DD/YYYY — defaults to today"),
     website:            z.string().optional(),
-    notes:              z.string().optional(),
+    salary:              z.string().optional(),
+    worksheet:          z.enum(["fulltime", "intern"]).optional().describe("Which spreadsheet to target. Defaults to 'fulltime'."),
     sheetName:          z.string().optional().describe("Tab name in the spreadsheet e.g. 'SWE', 'Internships'. Defaults to JOB_SHEET_NAME env var."),
     profile:            z.enum(["personal", "work"]).optional(),
   },
@@ -558,6 +559,7 @@ server.tool(
   {
     findCompany:        z.string().describe("Company name to search for"),
     findJob:            z.string().optional().describe("Job title to narrow the search if multiple rows match the same company"),
+    worksheet:          z.enum(["fulltime", "intern"]).optional().describe("Which spreadsheet to target. Defaults to 'fulltime'."),
     sheetName:          z.string().optional().describe("Tab name e.g. 'SWE'. Defaults to JOB_SHEET_NAME env var."),
     job:                z.string().optional(),
     company:            z.string().optional(),
@@ -566,7 +568,7 @@ server.tool(
     location:           z.string().optional(),
     completionDate:     z.string().optional(),
     website:            z.string().optional(),
-    notes:              z.string().optional(),
+    salary:              z.string().optional(),
     profile:            z.enum(["personal", "work"]).optional(),
   },
   async (data) => {

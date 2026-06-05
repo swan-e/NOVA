@@ -15,6 +15,9 @@ services:
       # Obsidian vault — path set in .env, mapped to fixed internal path.
       # To migrate to home server: update OBSIDIAN_VAULT_PATH in .env only.
       - ${OBSIDIAN_VAULT_PATH}:/obsidian:rw
+      # Live build mount — npm run build locally updates this instantly.
+      # No image rebuild needed for code changes.
+      - ./build:/app/build:ro
 
     working_dir: /app
     stdin_open: true
@@ -36,6 +39,7 @@ services:
       - OBSIDIAN_VAULT_INTERNAL=/obsidian
     volumes:
       - ${OBSIDIAN_VAULT_PATH}:/obsidian:rw
+      - ./build:/app/build:ro
 
     working_dir: /app
 

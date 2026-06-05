@@ -7,3 +7,7 @@ docker-compose.override.yml
 *.md
 .DS_Store
 Thumbs.db
+build
+.env.*
+Dockerfile
+docker-compose.yml

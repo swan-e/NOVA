@@ -5,5 +5,4 @@ dockerfile = "Dockerfile.upload"
 startCommand = "node build/upload-server.js"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
-restartPolicyType = "on-failure"
-restartPolicyMaxRetries = 3
+restartPolicyType = "always"

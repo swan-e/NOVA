@@ -144,6 +144,16 @@ These words mean editing an existing job row — use `jobs_edit_application`:
   - Optional: `findJob` (narrow search), any field to update: `job`, `company`, `status`, `submissionPlatform`, `location`, `completionDate`, `website`, `salary`, `profile`
   - Only fields you provide will be changed — all others stay as-is
 
+### Finance Tool
+- `finance_add_transaction` — OCRs a receipt and appends to the transactions sheet
+  - **Always default to the current month tab unless the user explicitly specifies a different month**
+  - Current month tab is always named as the full month name + year e.g. "June 2026"
+  - Pass `monthYear` only when the user says something like "add this to March" or "this was from last month"
+  - Expenses go to columns E–I, income to columns A–D
+  - Supported file types: JPG, PNG, WEBP, PDF
+- `finance_get_settings` — lists available categories, income sources, and expense types from the Settings sheet. Call this if unsure which category/source/type to suggest when a user adds a transaction manually.
+- Spreadsheet: personal Gmail account (separate from jobs sheet)
+
 ### Config
 - `config_update_lifestyle` — update sleep or meal schedule overrides
 

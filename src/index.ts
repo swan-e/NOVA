@@ -49,6 +49,9 @@ import {
 
 import { addJobApplication, editJobApplication } from "./tools/jobs";
 
+import { addTransaction, getFinanceSettings } from "./tools/finance";
+import type { TransactionOverrides } from "./tools/finance";
+
 import { addLifestyleOverride } from "./lib/config";
 
 // ── Server ─────────────────────────────────────────────────────────────────
@@ -574,6 +577,40 @@ server.tool(
   async (data) => {
     const result = await editJobApplication(data, data.profile);
     return { content: [{ type: "text", text: result }] };
+  }
+);
+
+// ── Finance Tools ──────────────────────────────────────────────────────────
+
+server.tool(
+  "finance_add_transaction",
+  "Upload a receipt photo or PDF invoice, OCR it, and append it to the transactions sheet. Defaults to current month tab unless monthYear is specified.",
+  {
+    filePath:  z.string().describe("Absolute path to the receipt image (JPG/PNG/WEBP) or PDF."),
+    monthYear: z.string().optional().describe('Override target month tab e.g. "June 2026". Defaults to current month.'),
+    overrides: z.object({
+      date:        z.string().optional().describe("Override parsed date (YYYY-MM-DD)"),
+      amount:      z.number().optional().describe("Override parsed amount"),
+      description: z.string().optional().describe("Override parsed description"),
+      type:        z.enum(["income", "expense"]).optional().describe("Override income/expense classification"),
+      source:      z.string().optional().describe("Income source override (income only)"),
+      expenseType: z.string().optional().describe("Want/Need/Savings override (expense only)"),
+      category:    z.string().optional().describe("Category override (expense only)"),
+    }).optional().describe("Manually override any OCR-parsed fields before writing to the sheet."),
+  },
+  async ({ filePath, monthYear, overrides }) => {
+    const text = await addTransaction(filePath, monthYear, overrides as TransactionOverrides);
+    return { content: [{ type: "text" as const, text }] };
+  }
+);
+
+server.tool(
+  "finance_get_settings",
+  "Read current dropdown options from the Settings sheet — categories, income sources, and expense types.",
+  {},
+  async () => {
+    const text = await getFinanceSettings();
+    return { content: [{ type: "text" as const, text }] };
   }
 );
 

@@ -5,7 +5,7 @@
       "email": "sean.fleming@gmail.com",
       "timezone": "America/New_York",
       "obsidianSubfolder": "Personal",
-      "tools": ["gmail", "calendar", "notion", "obsidian"],
+      "tools": ["gmail", "calendar", "notion", "obsidian", "sheets", "drive"],
       "envPrefix": "PERSONAL"
     },
     "work": {
@@ -13,7 +13,7 @@
       "email": "seanafleming2003@gmail.com",
       "timezone": "America/New_York",
       "obsidianSubfolder": "Work",
-      "tools": ["gmail", "calendar", "notion"],
+      "tools": ["gmail", "calendar", "notion", "obsidian", "sheets", "drive"],
       "envPrefix": "WORK"
     }
   },

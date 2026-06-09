@@ -14,16 +14,18 @@
  *   3. You log in with the correct Google account
  *   4. Google redirects back with an auth code
  *   5. Script exchanges the code for a refresh token
- *   6. Prints the refresh token — paste it into your .env
+ *   6. Automatically writes the token into your .env file
  */
 
 import * as http from "http";
 import * as url from "url";
+import * as fs from "fs";
+import * as path from "path";
 import { OAuth2Client } from "google-auth-library";
 import * as dotenv from "dotenv";
-import * as path from "path";
 
-dotenv.config({ path: path.resolve(__dirname, "../.env") });
+const ENV_PATH = path.resolve(__dirname, "../.env");
+dotenv.config({ path: ENV_PATH });
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -31,17 +33,45 @@ const SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/calendar",
   "https://www.googleapis.com/auth/spreadsheets",
+  "https://www.googleapis.com/auth/drive",
 ];
 
 const PORT = 3000;
 const REDIRECT_URI = `http://localhost:${PORT}/oauth/callback`;
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// ── .env writer ──────────────────────────────────────────────────────────────
+
+/**
+ * Updates a single key in the .env file in-place.
+ * - If the key already exists, replaces its value on that line.
+ * - If the key doesn't exist, appends it at the end.
+ * - All other lines are left completely untouched.
+ */
+function updateEnvFile(key: string, value: string): void {
+  const raw     = fs.existsSync(ENV_PATH) ? fs.readFileSync(ENV_PATH, "utf8") : "";
+  const lines   = raw.split("\n");
+  const pattern = new RegExp(`^${key}=.*$`);
+  const newLine = `${key}=${value}`;
+
+  const idx = lines.findIndex((l) => pattern.test(l));
+
+  if (idx !== -1) {
+    lines[idx] = newLine;
+  } else {
+    // Append — preserve trailing newline style of the file
+    if (raw.length > 0 && !raw.endsWith("\n")) lines.push("");
+    lines.push(newLine);
+  }
+
+  fs.writeFileSync(ENV_PATH, lines.join("\n"), "utf8");
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function getEnvPrefix(profile: string): string {
   const map: Record<string, string> = {
     personal: "PERSONAL",
-    work: "WORK",
+    work:     "WORK",
   };
   const prefix = map[profile.toLowerCase()];
   if (!prefix) {
@@ -73,16 +103,17 @@ async function main() {
     process.exit(1);
   }
 
-  const prefix = getEnvPrefix(profile);
-  const clientId = requireVar(`${prefix}_GOOGLE_CLIENT_ID`);
+  const prefix       = getEnvPrefix(profile);
+  const clientId     = requireVar(`${prefix}_GOOGLE_CLIENT_ID`);
   const clientSecret = requireVar(`${prefix}_GOOGLE_CLIENT_SECRET`);
+  const tokenKey     = `${prefix}_GOOGLE_REFRESH_TOKEN`;
 
   const oauth2Client = new OAuth2Client(clientId, clientSecret, REDIRECT_URI);
 
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
-    scope: SCOPES,
-    prompt: "consent", // forces refresh token to be returned every time
+    scope:       SCOPES,
+    prompt:      "consent", // forces refresh token every time
   });
 
   console.log("\n─────────────────────────────────────────────────");
@@ -97,14 +128,19 @@ async function main() {
 
   const refreshToken = await waitForCallback(oauth2Client);
 
+  // Write directly into .env — no manual copy needed
+  updateEnvFile(tokenKey, refreshToken);
+
   console.log("\n─────────────────────────────────────────────────");
-  console.log("  SUCCESS — Refresh token generated");
+  console.log("  SUCCESS — .env updated automatically");
   console.log("─────────────────────────────────────────────────");
-  console.log(`\nAdd this to your .env file:\n`);
-  console.log(`${prefix}_GOOGLE_REFRESH_TOKEN=${refreshToken}`);
-  console.log("\n─────────────────────────────────────────────────\n");
+  console.log(`\n  ${tokenKey} has been written to .env`);
+  console.log("\n  Run: make build");
+  console.log("─────────────────────────────────────────────────\n");
   process.exit(0);
 }
+
+// ── OAuth callback server ─────────────────────────────────────────────────────
 
 function waitForCallback(oauth2Client: OAuth2Client): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -112,8 +148,8 @@ function waitForCallback(oauth2Client: OAuth2Client): Promise<string> {
       if (!req.url?.startsWith("/oauth/callback")) return;
 
       const params = new url.URL(req.url, `http://localhost:${PORT}`).searchParams;
-      const code = params.get("code");
-      const error = params.get("error");
+      const code   = params.get("code");
+      const error  = params.get("error");
 
       if (error) {
         res.writeHead(400);
@@ -132,8 +168,8 @@ function waitForCallback(oauth2Client: OAuth2Client): Promise<string> {
       }
 
       try {
-        const { tokens } = await oauth2Client.getToken(code);
-        const refreshToken = tokens.refresh_token;
+        const { tokens }     = await oauth2Client.getToken(code);
+        const refreshToken   = tokens.refresh_token;
 
         if (!refreshToken) {
           res.writeHead(400);
@@ -149,8 +185,8 @@ function waitForCallback(oauth2Client: OAuth2Client): Promise<string> {
         res.writeHead(200);
         res.end(`
           <h2>✅ Success!</h2>
-          <p>Your refresh token has been printed in the terminal.</p>
-          <p>You can close this tab.</p>
+          <p>Your .env has been updated automatically.</p>
+          <p>You can close this tab and run <code>make build</code>.</p>
         `);
 
         server.close();

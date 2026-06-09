@@ -1,3 +1,7 @@
+# Baked image for Railway deployment.
+# No volume mounts — everything is built into the image.
+# receipts/ is ephemeral on Railway since files are deleted after Drive upload.
+
 FROM node:20-slim
 
 WORKDIR /app

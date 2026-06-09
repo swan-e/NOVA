@@ -1,82 +1,18 @@
 services:
 
-  # ── Scripts (cron target) ──────────────────────────────────────────────────
-  # Ofelia exec's into this container on schedule.
-  # Ollama runs on the host (or future home server) — reachable via OLLAMA_HOST.
-  scripts:
-    build:
-      context: .
-    container_name: nova-mcp-scripts
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      - OBSIDIAN_VAULT_INTERNAL=/obsidian
-    volumes:
-      - ${OBSIDIAN_VAULT_PATH}:/obsidian:rw
-      - ./build:/app/build:ro
-      - ./receipts:/app/receipts:rw
-    working_dir: /app
-
-    # Keeps container alive between cron runs
-    command: ["node", "-e", "setInterval(() => {}, 1 << 30)"]
-
-    labels:
-      ofelia.enabled: "true"
-
-      # ── Morning briefing: 7:00am daily ───────────────────────────────────
-      # Runs before the email summary. Creates Daily Briefings/YYYY-MM-DD.md
-      # with today's calendar events + Notion tasks in one Obsidian note.
-      ofelia.job-exec.morning-briefing.schedule:   "0 0 7 * * *"
-      ofelia.job-exec.morning-briefing.command:    "node build/scripts/morning-briefing.js"
-      ofelia.job-exec.morning-briefing.no-overlap: "true"
- 
-      # ── Daily email summary: 3x per day ──────────────────────────────────
-      # Each run appends a timestamped section to today's Obsidian note.
-      # 8am  → creates the note + Morning section
-      # 12pm → appends Afternoon section
-      # 4pm  → appends Evening section
-
-      ofelia.job-exec.email-morning.schedule:    "0 0 8  * * *"
-      ofelia.job-exec.email-morning.command:     "node build/scripts/daily-email-summary.js"
-      ofelia.job-exec.email-morning.no-overlap:  "true"
-
-      ofelia.job-exec.email-afternoon.schedule:   "0 0 12 * * *"
-      ofelia.job-exec.email-afternoon.command:    "node build/scripts/daily-email-summary.js"
-      ofelia.job-exec.email-afternoon.no-overlap: "true"
-
-      ofelia.job-exec.email-evening.schedule: "0 0 16 * * *"
-      ofelia.job-exec.email-evening.command:      "node build/scripts/daily-email-summary.js"
-      ofelia.job-exec.email-evening.no-overlap:   "true"
-
-      # ── Weekly review: every Sunday at 7:00am ────────────────────────────
-      ofelia.job-exec.weekly_review.schedule:   "0 0 7 * * SUN"
-      ofelia.job-exec.weekly_review.command:    "node build/scripts/weekly-review.js"
-      ofelia.job-exec.weekly_review.no-overlap: "true"
-
-      # ── Calendar reminder: every Sunday at 8:00am ────────────────────────
-      ofelia.job-exec.calendar_reminder.schedule:   "0 0 8 * * SUN"
-      ofelia.job-exec.calendar_reminder.command:    "node build/scripts/calendar-reminder.js"
-      ofelia.job-exec.calendar_reminder.no-overlap: "true"
-
-   # ── Receipt Upload Server ──────────────────────────────────────────────────
+  # ── Receipt Upload Server ──────────────────────────────────────────────────
   # Accepts photo/PDF uploads from phone via POST /upload.
-  # Saves directly to receipts/ — no AI, no tokens.
-  # Separate from MCP so a crash here never affects Claude Code.
+  # Saves to /app/receipts — no AI, no tokens.
+  # Baked image pattern — no volume mounts on Railway.
   upload:
     build:
       context: .
       dockerfile: Dockerfile.upload
     container_name: nova-mcp-upload
     restart: unless-stopped
-    env_file:
-      - .env
-    volumes:
-      - ./build:/app/build:ro
-      - ./receipts:/app/receipts:rw
-    working_dir: /app
-    # Only accessible internally — Cloudflare Tunnel is the external entry point.
-    # Never expose this port directly to the internet.
+    environment:
+      - UPLOAD_SECRET_KEY=${UPLOAD_SECRET_KEY}
+      - UPLOAD_PORT=4000
     expose:
       - "4000"
     healthcheck:
@@ -84,17 +20,10 @@ services:
       interval: 30s
       timeout:  5s
       retries:  3
- 
+
   # ── Cloudflare Tunnel ──────────────────────────────────────────────────────
-  # Exposes the upload server at your Cloudflare tunnel URL.
-  # Your phone hits https://your-tunnel.trycloudflare.com/upload
-  # Traffic goes Cloudflare → tunnel → upload container — your IP never exposed.
-  #
-  # Setup (one-time):
-  #   1. Sign up at dash.cloudflare.com (free)
-  #   2. Go to Zero Trust → Networks → Tunnels → Create tunnel
-  #   3. Copy the tunnel token into .env as CLOUDFLARE_TUNNEL_TOKEN
-  #   4. Set the tunnel to route to http://upload:4000
+  # Routes https://receipts.firstlast.dev → upload:4000
+  # Your phone hits the public URL — Railway internal network handles routing.
   cloudflare:
     image: cloudflare/cloudflared:latest
     container_name: nova-mcp-cloudflare
@@ -105,16 +34,3 @@ services:
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
-
-  # ── Ofelia Scheduler ───────────────────────────────────────────────────────
-  ofelia:
-    image: mcuadros/ofelia:latest
-    container_name: nova-mcp-ofelia
-    restart: unless-stopped
-    depends_on:
-      - scripts
-    command: daemon --docker
-    environment:
-      - TZ=America/New_York
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro

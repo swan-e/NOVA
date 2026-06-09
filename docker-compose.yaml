@@ -1,7 +1,8 @@
 services:
 
   # ── MCP Server ─────────────────────────────────────────────────────────────
-  # Always-on. Claude Code connects to this via .mcp.json.
+  # Spin up when working with Claude Code, down when not.
+  # Connects to Claude Code via .mcp.json on your laptop.
   mcp:
     build:
       context: .
@@ -12,15 +13,71 @@ services:
     environment:
       - OBSIDIAN_VAULT_INTERNAL=/obsidian
     volumes:
-      # Obsidian vault — path set in .env, mapped to fixed internal path.
-      # To migrate to home server: update OBSIDIAN_VAULT_PATH in .env only.
       - ${OBSIDIAN_VAULT_PATH}:/obsidian:rw
-      # Live build mount — npm run build locally updates this instantly.
-      # No image rebuild needed for code changes.
       - ./build:/app/build:ro
       - ./receipts:/app/receipts:rw
-
     working_dir: /app
     stdin_open: true
     tty: true
     command: ["node", "build/index.js"]
+
+  # ── Scripts (cron target) ──────────────────────────────────────────────────
+  # Always-on locally. Ofelia exec's into this container on schedule.
+  scripts:
+    build:
+      context: .
+    container_name: nova-mcp-scripts
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - OBSIDIAN_VAULT_INTERNAL=/obsidian
+    volumes:
+      - ${OBSIDIAN_VAULT_PATH}:/obsidian:rw
+      - ./build:/app/build:ro
+      - ./receipts:/app/receipts:rw
+    working_dir: /app
+    command: ["node", "-e", "setInterval(() => {}, 1 << 30)"]
+    labels:
+      ofelia.enabled: "true"
+
+      # ── Morning briefing: 7:00am daily ───────────────────────────────────
+      ofelia.job-exec.morning-briefing.schedule:   "0 0 7 * * *"
+      ofelia.job-exec.morning-briefing.command:    "node build/scripts/morning-briefing.js"
+      ofelia.job-exec.morning-briefing.no-overlap: "true"
+
+      # ── Daily email summary: 3x per day ──────────────────────────────────
+      ofelia.job-exec.email-morning.schedule:      "0 0 8  * * *"
+      ofelia.job-exec.email-morning.command:       "node build/scripts/daily-email-summary.js"
+      ofelia.job-exec.email-morning.no-overlap:    "true"
+
+      ofelia.job-exec.email-afternoon.schedule:    "0 0 12 * * *"
+      ofelia.job-exec.email-afternoon.command:     "node build/scripts/daily-email-summary.js"
+      ofelia.job-exec.email-afternoon.no-overlap:  "true"
+
+      ofelia.job-exec.email-evening.schedule:      "0 0 16 * * *"
+      ofelia.job-exec.email-evening.command:       "node build/scripts/daily-email-summary.js"
+      ofelia.job-exec.email-evening.no-overlap:    "true"
+
+      # ── Weekly review: every Sunday at 7:00am ────────────────────────────
+      ofelia.job-exec.weekly_review.schedule:      "0 0 7 * * SUN"
+      ofelia.job-exec.weekly_review.command:       "node build/scripts/weekly-review.js"
+      ofelia.job-exec.weekly_review.no-overlap:    "true"
+
+      # ── Calendar reminder: every Sunday at 8:00am ────────────────────────
+      ofelia.job-exec.calendar_reminder.schedule:  "0 0 8 * * SUN"
+      ofelia.job-exec.calendar_reminder.command:   "node build/scripts/calendar-reminder.js"
+      ofelia.job-exec.calendar_reminder.no-overlap: "true"
+
+  # ── Ofelia Scheduler ───────────────────────────────────────────────────────
+  ofelia:
+    image: mcuadros/ofelia:latest
+    container_name: nova-mcp-ofelia
+    restart: unless-stopped
+    depends_on:
+      - scripts
+    command: daemon --docker
+    environment:
+      - TZ=America/New_York
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro

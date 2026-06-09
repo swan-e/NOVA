@@ -1,6 +1,0 @@
-[build]
-dockerfile = "Dockerfile"
-
-[deploy]
-startCommand = "node -e \"setInterval(() => {}, 1 << 30)\""
-restartPolicyType = "always"

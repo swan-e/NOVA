@@ -17,7 +17,7 @@ import * as crypto from "crypto";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const PORT         = parseInt(process.env.UPLOAD_PORT ?? "4000", 10);
+const PORT         = parseInt(process.env.PORT ?? process.env.UPLOAD_PORT ?? "4000", 10);
 const SECRET_KEY   = process.env.UPLOAD_SECRET_KEY;
 const RECEIPTS_DIR = process.env.RECEIPTS_DIR ?? "/app/receipts";
 

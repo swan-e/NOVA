@@ -288,11 +288,10 @@ async function uploadReceiptToDrive(filePath: string, date: string): Promise<str
 // Income:  A–D (Date, Amount, Description, Source)          headers row 4, data from row 5
 // Expense: E–I (Date, Amount, Description, Type, Category)   headers row 4, data from row 5
 //
-// Google Sheets values.append with INSERT_ROWS ignores column anchoring and
-// always inserts at column A regardless of the range start column.
-// Fix: manually find the next empty row in the correct anchor column (A for
-// income, E for expenses) from row 5 downward, then use values.update to
-// write to the exact cell range. This guarantees expenses always land in E–I.
+// Uses values.append with OVERWRITE (not INSERT_ROWS) anchored at row 5.
+// OVERWRITE respects the column anchor and writes at the next empty row in
+// the specified range — it never shifts content to column A.
+// Google Sheets expands the sheet automatically when the range is exhausted.
 
 async function appendToSheet(
   tab:         string,
@@ -304,55 +303,55 @@ async function appendToSheet(
   const isIncome      = transaction.type === "income";
 
   // Income: A–D  |  Expense: E–I
-  // Scan anchor column from row 5 to find next empty row independently
-  const DATA_START = 5;
-  const anchorCol  = isIncome ? "A" : "E";
-  const endCol     = isIncome ? "D" : "I";
-
-  // Find next empty row by reading existing data in anchor column from row 5
-  const scanRange = `'${tab}'!${anchorCol}${DATA_START}:${anchorCol}`;
-  const scanRes   = await sheets.spreadsheets.values.get({ spreadsheetId, range: scanRange });
-  const filled    = (scanRes.data.values ?? []).length;
-  const nextRow   = DATA_START + filled;
+  // Anchored at row 5 — headers at row 4 are never touched
+  const anchorCol = isIncome ? "A" : "E";
+  const endCol    = isIncome ? "D" : "I";
 
   const row: (string | number)[] = isIncome
     ? [transaction.date, transaction.amount, transaction.description, transaction.source ?? ""]
     : [transaction.date, transaction.amount, transaction.description, transaction.expenseType ?? "", transaction.category ?? ""];
 
-  // Use update (not append) to write to the exact column range
-  await sheets.spreadsheets.values.update({
+  const appendRes = await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range:            `'${tab}'!${anchorCol}${nextRow}:${endCol}${nextRow}`,
+    range:            `'${tab}'!${anchorCol}5:${endCol}`,
     valueInputOption: "USER_ENTERED",
+    insertDataOption: "OVERWRITE",
     requestBody:      { values: [row] },
   });
 
-  // Attach Drive receipt link as a cell note on the Date cell
-  const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
-  const sheetId   = sheetMeta.data.sheets?.find(
-    (s) => s.properties?.title === tab
-  )?.properties?.sheetId;
+  // Parse written row number from response e.g. "June 2026!E7:I7" → 7
+  const updatedRange = appendRes.data.updates?.updatedRange ?? "";
+  const rowMatch     = updatedRange.match(/(\d+):\w+\d+$/);
+  const nextRow      = rowMatch ? parseInt(rowMatch[1], 10) : 0;
 
-  if (sheetId !== undefined) {
-    const colIndex = isIncome ? 0 : 4; // A=0, E=4
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId,
-      requestBody: {
-        requests: [{
-          updateCells: {
-            range: {
-              sheetId,
-              startRowIndex:    nextRow - 1,
-              endRowIndex:      nextRow,
-              startColumnIndex: colIndex,
-              endColumnIndex:   colIndex + 1,
+  // Attach Drive receipt link as a cell note on the Date cell
+  if (nextRow > 0) {
+    const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheetId   = sheetMeta.data.sheets?.find(
+      (s) => s.properties?.title === tab
+    )?.properties?.sheetId;
+
+    if (sheetId !== undefined) {
+      const colIndex = isIncome ? 0 : 4; // A=0, E=4
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [{
+            updateCells: {
+              range: {
+                sheetId,
+                startRowIndex:    nextRow - 1,
+                endRowIndex:      nextRow,
+                startColumnIndex: colIndex,
+                endColumnIndex:   colIndex + 1,
+              },
+              rows:   [{ values: [{ note: `Receipt: ${driveLink}` }] }],
+              fields: "note",
             },
-            rows:   [{ values: [{ note: `Receipt: ${driveLink}` }] }],
-            fields: "note",
-          },
-        }],
-      },
-    });
+          }],
+        },
+      });
+    }
   }
 
   return nextRow;
@@ -412,7 +411,7 @@ export async function addTransaction(
 }
 
 export async function processAllReceipts(monthYear?: string): Promise<string> {
-  const pending = await listR2Receipts();
+  const pending: { key: string; filename: string; folder: string; note?: string }[] = await listR2Receipts();
 
   if (pending.length === 0) {
     return "📭 No pending receipts in R2.";
@@ -444,7 +443,7 @@ export async function processAllReceipts(monthYear?: string): Promise<string> {
 }
 
 export async function listPendingReceipts(): Promise<string> {
-  const pending = await listR2Receipts();
+  const pending: { key: string; filename: string; folder: string; note?: string }[] = await listR2Receipts();
 
   if (pending.length === 0) {
     return "📭 No pending receipts in R2.";

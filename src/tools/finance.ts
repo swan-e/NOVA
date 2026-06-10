@@ -235,7 +235,22 @@ Rules:
     .replace(/```json|```/g, "")
     .trim();
 
-  return JSON.parse(raw) as ParsedTransaction;
+  const parsed = JSON.parse(raw) as ParsedTransaction;
+
+  // Always enforce the current year — receipts are assumed to be current.
+  // OCR frequently misreads 2-digit years (e.g. "06/04/26" → 2025 or 2025).
+  // Keep the parsed month and day but replace the year with the current year.
+  if (parsed.date) {
+    const currentYear = new Date().getFullYear();
+    const [, month, day] = parsed.date.split("-");
+    if (month && day) {
+      parsed.date = `${currentYear}-${month}-${day}`;
+    } else {
+      parsed.date = new Date().toISOString().split("T")[0];
+    }
+  }
+
+  return parsed;
 }
 
 // ─── Google Drive Upload ──────────────────────────────────────────────────────
@@ -287,8 +302,20 @@ async function uploadReceiptToDrive(filePath: string, date: string): Promise<str
 }
 
 // ─── Append Row to Sheet ──────────────────────────────────────────────────────
-// Uses values.append instead of values.update so Google Sheets automatically
-// finds the next empty row and expands the sheet if needed — no row limit issues.
+// Income:  A–D (Date, Amount, Description, Source)        headers row 4, data from row 5
+// Expense: E–I (Date, Amount, Description, Type, Category) headers row 4, data from row 5
+//
+// Uses values.get to find the next empty row from row 5 downward (respecting
+// the two independent sections), then values.update to write the exact row.
+// This prevents Google Sheets append from writing to row 1 instead of row 5+.
+
+async function findNextRow(tab: string, startRow: number, anchorCol: string): Promise<number> {
+  const spreadsheetId = getSpreadsheetId();
+  const range = `'${tab}'!${anchorCol}${startRow}:${anchorCol}2000`;
+  const res   = await getSheetsClient().spreadsheets.values.get({ spreadsheetId, range });
+  // Count filled rows from startRow — next empty is startRow + filled count
+  return startRow + (res.data.values ?? []).length;
+}
 
 async function appendToSheet(
   tab:         string,
@@ -299,58 +326,51 @@ async function appendToSheet(
   const sheets        = getSheetsClient();
   const isIncome      = transaction.type === "income";
 
-  // Income:  A–D (Date, Amount, Description, Source)
-  // Expense: E–I (Date, Amount, Description, Type, Category)
-  const anchorCol = isIncome ? "A" : "E";
-  const endCol    = isIncome ? "D" : "I";
+  // Income:  A–D | Expense: E–I
+  // Headers at row 4, data starts at row 5 — never write above row 5
+  const DATA_START    = 5;
+  const anchorCol     = isIncome ? "A" : "E";
+  const endCol        = isIncome ? "D" : "I";
+
+  const nextRow = await findNextRow(tab, DATA_START, anchorCol);
 
   const row: (string | number)[] = isIncome
     ? [transaction.date, transaction.amount, transaction.description, transaction.source ?? ""]
     : [transaction.date, transaction.amount, transaction.description, transaction.expenseType ?? "", transaction.category ?? ""];
 
-  // append automatically finds the next empty row after the last data row
-  // and expands the sheet if it hits the row limit
-  const appendRes = await sheets.spreadsheets.values.append({
+  await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range:                         `'${tab}'!${anchorCol}:${endCol}`,
-    valueInputOption:              "USER_ENTERED",
-    insertDataOption:              "INSERT_ROWS",
-    requestBody:                   { values: [row] },
+    range:            `'${tab}'!${anchorCol}${nextRow}:${endCol}${nextRow}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody:      { values: [row] },
   });
 
-  // Parse the row number from the updated range e.g. "June 2026!A6:D6" → 6
-  const updatedRange = appendRes.data.updates?.updatedRange ?? "";
-  const rowMatch     = updatedRange.match(/\d+$/);
-  const nextRow      = rowMatch ? parseInt(rowMatch[0], 10) : 0;
-
   // Attach Drive receipt link as a cell note on the Date cell
-  if (nextRow > 0) {
-    const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
-    const sheetId   = sheetMeta.data.sheets?.find(
-      (s) => s.properties?.title === tab
-    )?.properties?.sheetId;
+  const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
+  const sheetId   = sheetMeta.data.sheets?.find(
+    (s) => s.properties?.title === tab
+  )?.properties?.sheetId;
 
-    if (sheetId !== undefined) {
-      const colIndex = isIncome ? 0 : 4; // A=0, E=4
-      await sheets.spreadsheets.batchUpdate({
-        spreadsheetId,
-        requestBody: {
-          requests: [{
-            updateCells: {
-              range: {
-                sheetId,
-                startRowIndex:    nextRow - 1,
-                endRowIndex:      nextRow,
-                startColumnIndex: colIndex,
-                endColumnIndex:   colIndex + 1,
-              },
-              rows:   [{ values: [{ note: `Receipt: ${driveLink}` }] }],
-              fields: "note",
+  if (sheetId !== undefined) {
+    const colIndex = isIncome ? 0 : 4; // A=0, E=4
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          updateCells: {
+            range: {
+              sheetId,
+              startRowIndex:    nextRow - 1,
+              endRowIndex:      nextRow,
+              startColumnIndex: colIndex,
+              endColumnIndex:   colIndex + 1,
             },
-          }],
-        },
-      });
-    }
+            rows:   [{ values: [{ note: `Receipt: ${driveLink}` }] }],
+            fields: "note",
+          },
+        }],
+      },
+    });
   }
 
   return nextRow;

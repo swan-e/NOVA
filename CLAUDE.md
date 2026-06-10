@@ -70,10 +70,14 @@ Read this before every session. Never guess — follow these rules exactly.
 → Always ask for sheetName if not specified
 
 ### "Add this receipt" / "Log this expense" / "I spent X" / "Upload receipt"
-→ **Finance** — use `finance_add_transaction`
+→ **Finance** — use `finance_list_receipts` first, then `finance_add_transaction` or `finance_process_all`
 → **Always default to current month tab** unless user specifies a different month
 → Call `finance_get_settings` first if unsure which category/source/type to use
-→ If user provides a file path, pass it directly — do not modify the path
+→ Never construct an R2 key manually — always get it from `finance_list_receipts`
+
+### "Process all receipts" / "Process everything pending" / "Log all my receipts"
+→ **Finance** — use `finance_process_all`
+→ Lists and processes all pending R2 receipts in one call
 
 ### "What receipts are pending" / "What's in the receipts folder"
 → **Finance** — use `finance_list_receipts`
@@ -100,8 +104,11 @@ These words mean a job application log entry — use `jobs_add_application`:
 These words mean editing an existing job row — use `jobs_edit_application`:
 - "update job", "edit application", "change status", "mark as blocked", "mark as in progress", "update my application"
 
-These words mean a finance transaction — use `finance_add_transaction`:
-- "receipt", "expense", "I spent", "I paid", "log this purchase", "add transaction", "upload receipt"
+These words mean a single finance transaction — use `finance_list_receipts` then `finance_add_transaction`:
+- "add this receipt", "log this expense", "I paid", "log this purchase", "add transaction"
+
+These words mean process everything at once — use `finance_process_all`:
+- "process all receipts", "process everything", "log all my receipts", "clear the queue"
 
 ---
 
@@ -153,21 +160,27 @@ These words mean a finance transaction — use `finance_add_transaction`:
   - Only fields you provide will be changed — all others stay as-is
 
 ### Finance
-- `finance_add_transaction` — OCR a receipt photo or PDF and append to the transactions sheet
+- `finance_add_transaction` — download a receipt from R2, OCR it, upload to Drive, and append to the transactions sheet
   - **Always default to current month tab** unless user explicitly specifies a different month
   - Current month tab format: full month name + year e.g. "June 2026"
   - Pass `monthYear` only when user says "add this to March" or "this was from last month"
-  - Expenses → columns E–I, Income → columns A–D
-  - Supported file types: JPG, PNG, WEBP, PDF
-  - File path is the absolute path on the server e.g. `/app/receipts/receipt_2026-06-09.jpg`
+  - **Income → columns A–D** (Date, Amount, Description, Source) — headers row 4, data from row 5
+  - **Expenses → columns E–I** (Date, Amount, Description, Type, Category) — headers row 4, data from row 5
+  - Pass `r2Key` from `finance_list_receipts` — never construct the key manually
+  - Deletes from R2 after confirmed Drive upload
 
-- `finance_list_receipts` — list all unprocessed receipt files waiting in `/app/receipts/`
-  - Call this before processing to see what's pending
-  - Use returned filenames to build the full path for `finance_add_transaction`
+- `finance_process_all` — process ALL pending receipts in R2 at once
+  - Use this when user says "process all receipts" or "process everything pending"
+  - Optionally pass `monthYear` to override month for all receipts
+  - Reports success/failure per file
+
+- `finance_list_receipts` — list all unprocessed receipt files waiting in R2
+  - Always call this before `finance_add_transaction` to get the r2Key
+  - Returns filename and folder for each pending receipt
 
 - `finance_get_settings` — read current dropdown options from the Settings sheet
   - Call this if unsure which category/source/type to use for a transaction
-  - Shows all valid values for Category, Source (income), and Type (expense)
+  - Shows all valid values for Category (expenses only), Source (income), and Type (expense)
 
 ### Config
 - `config_update_lifestyle` — update sleep or meal schedule overrides
@@ -205,4 +218,6 @@ These words mean a finance transaction — use `finance_add_transaction`:
 7. When logging or editing a job application, always use `jobs_*` tools with profile: "work". Never use Notion tasks for job tracking.
 8. Always ask for `sheetName` when using any `jobs_*` tool if it hasn't been specified.
 9. For finance transactions, always default to the current month. Never ask which month unless the user explicitly mentions a different one.
-10. Always call `finance_list_receipts` before processing receipts so you know exactly which files are pending.
+10. Always call `finance_list_receipts` before `finance_add_transaction` to get the r2Key. Never guess or construct R2 keys manually.
+11. For "process all", use `finance_process_all` directly — no need to list first.
+12. Income goes to columns A–D only. Expenses go to columns E–I only. Never mix them.

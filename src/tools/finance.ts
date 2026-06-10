@@ -41,8 +41,6 @@ type SheetsClient = sheets_v4.Sheets;
 type DriveClient  = drive_v3.Drive;
 
 // ─── Clients ──────────────────────────────────────────────────────────────────
-// Reuses the "personal" profile from config/profiles.json — same OAuth2 client
-// as gmail.ts and calendar.ts. No separate credentials needed.
 
 let _sheets: SheetsClient | undefined;
 let _drive:  DriveClient  | undefined;
@@ -80,20 +78,17 @@ function tabNameFromString(monthYear?: string): string {
 
   const normalized = monthYear.trim();
 
-  // "June 2026" or "june 2026"
   if (/^[A-Za-z]+ \d{4}$/.test(normalized)) {
     const d = new Date(`${normalized} 1`);
     if (!isNaN(d.getTime())) {
       return d.toLocaleString("en-US", { month: "long", year: "numeric" });
     }
   }
-  // "06/2026"
   const slashMatch = normalized.match(/^(\d{1,2})\/(\d{4})$/);
   if (slashMatch) {
     const d = new Date(parseInt(slashMatch[2], 10), parseInt(slashMatch[1], 10) - 1, 1);
     return d.toLocaleString("en-US", { month: "long", year: "numeric" });
   }
-  // "2026-06"
   const isoMatch = normalized.match(/^(\d{4})-(\d{2})$/);
   if (isoMatch) {
     const d = new Date(parseInt(isoMatch[1], 10), parseInt(isoMatch[2], 10) - 1, 1);
@@ -136,9 +131,9 @@ async function readSettings(): Promise<SheetSettings> {
   }
 
   const [categories, incomeSources, expenseTypes] = await Promise.all([
-    colValues("CATEGORY"),  // A — expense categories
-    colValues("SOURCE"),    // B — income sources
-    colValues("TYPE"),      // C — expense types (Want/Need/Savings)
+    colValues("CATEGORY"),
+    colValues("SOURCE"),
+    colValues("TYPE"),
   ]);
 
   return { categories, incomeSources, expenseTypes };
@@ -148,7 +143,8 @@ async function readSettings(): Promise<SheetSettings> {
 
 async function ocrReceipt(
   filePath: string,
-  settings: SheetSettings
+  settings: SheetSettings,
+  note?:    string
 ): Promise<ParsedTransaction> {
   const ext     = path.extname(filePath).toLowerCase();
   const isImage = [".jpg", ".jpeg", ".png", ".webp"].includes(ext);
@@ -164,33 +160,25 @@ async function ocrReceipt(
                   : ext === ".webp" ? "image/webp"
                   : "image/jpeg";
 
-  const anthropic = new Anthropic();
+  const anthropic  = new Anthropic();
+  const noteContext = note ? `\nUser note: "${note}"` : "";
 
-  const systemPrompt = `You are a receipt and invoice parser. Extract transaction data and return ONLY valid JSON.
+  const systemPrompt = `Receipt parser. Return ONLY valid JSON, no markdown.
 
-Available expense categories: ${settings.categories.join(", ")}
-Available income sources: ${settings.incomeSources.join(", ")}
-Available expense types: ${settings.expenseTypes.join(", ")} (label expenses as Want/Need/Savings)
+Categories: ${settings.categories.join(", ")}
+Income sources: ${settings.incomeSources.join(", ")}
+Expense types: ${settings.expenseTypes.join(", ")}${noteContext}
 
-Return this exact JSON shape — no markdown, no explanation:
-{
-  "date": "YYYY-MM-DD",
-  "amount": 0.00,
-  "description": "merchant or payer name + brief what",
-  "type": "expense" or "income",
-  "source": "closest match from income sources (income only, else null)",
-  "expenseType": "Want, Need, or Savings (expense only, else null)",
-  "category": "closest match from expense categories (expense only, else null)"
-}
+JSON shape:
+{"date":"YYYY-MM-DD","amount":0.00,"description":"merchant + what (max 60 chars)","type":"expense|income","source":"income source or null","expenseType":"Want|Need|Savings or null","category":"expense category or null"}
 
 Rules:
-- date: use receipt date, default to today if not found
-- amount: always positive
-- description: concise, max 60 chars
-- Income has NO category — set category to null for income
-- Needs are essentials (rent, groceries, utilities, medical)
-- Savings are transfers to savings/investments
-- Everything else is a Want`;
+- Default to "expense". Only use "income" for pay stubs, bank transfers received, Venmo/Zelle received, refunds.
+- User note above overrides your classification if it specifies income/expense or source.
+- Restaurants/takeout/food delivery = expense, Want. Groceries/supermarket = expense, Need.
+- Needs: rent, groceries, utilities, medical, transport to work. Savings: investment/savings transfers. All else: Want.
+- Income has no category (null). Expenses need category + expenseType.
+- date: use month/day from receipt — year is always ${new Date().getFullYear()}.`;
 
   type ImageMediaType = "image/jpeg" | "image/png" | "image/webp";
   type PdfMediaType   = "application/pdf";
@@ -207,20 +195,19 @@ Rules:
 
   const response = await anthropic.messages.create({
     model:      "claude-haiku-4-5-20251001",
-    max_tokens: 512,
+    max_tokens: 256,
     system:     systemPrompt,
     messages: [
       {
         role: "user",
         content: [
           contentBlock,
-          { type: "text", text: "Parse this receipt/invoice into the JSON format specified." },
+          { type: "text", text: "Parse this receipt." },
         ],
       },
     ],
   });
 
-  // Narrow the union to text-only blocks without relying on SDK namespace types
   type TextBlock = { type: "text"; text: string };
   const isTextBlock = (b: unknown): b is TextBlock =>
     typeof b === "object" &&
@@ -237,17 +224,13 @@ Rules:
 
   const parsed = JSON.parse(raw) as ParsedTransaction;
 
-  // Always enforce the current year — receipts are assumed to be current.
-  // OCR frequently misreads 2-digit years (e.g. "06/04/26" → 2025 or 2025).
-  // Keep the parsed month and day but replace the year with the current year.
+  // Always enforce current year — keep parsed month/day, replace year
   if (parsed.date) {
-    const currentYear = new Date().getFullYear();
+    const currentYear    = new Date().getFullYear();
     const [, month, day] = parsed.date.split("-");
-    if (month && day) {
-      parsed.date = `${currentYear}-${month}-${day}`;
-    } else {
-      parsed.date = new Date().toISOString().split("T")[0];
-    }
+    parsed.date = (month && day)
+      ? `${currentYear}-${month}-${day}`
+      : new Date().toISOString().split("T")[0];
   }
 
   return parsed;
@@ -256,9 +239,9 @@ Rules:
 // ─── Google Drive Upload ──────────────────────────────────────────────────────
 
 async function uploadReceiptToDrive(filePath: string, date: string): Promise<string> {
-  const drive             = getDriveClient();
+  const drive               = getDriveClient();
   const [yearStr, monthStr] = date.split("-");
-  const monthName         = new Date(parseInt(yearStr, 10), parseInt(monthStr, 10) - 1, 1)
+  const monthName           = new Date(parseInt(yearStr, 10), parseInt(monthStr, 10) - 1, 1)
     .toLocaleString("en-US", { month: "long" });
 
   async function findOrCreateFolder(name: string, parentId?: string): Promise<string> {
@@ -302,13 +285,14 @@ async function uploadReceiptToDrive(filePath: string, date: string): Promise<str
 }
 
 // ─── Append Row to Sheet ──────────────────────────────────────────────────────
-// Income:  A–D (Date, Amount, Description, Source)         headers row 4, data from row 5
-// Expense: E–I (Date, Amount, Description, Type, Category)  headers row 4, data from row 5
+// Income:  A–D (Date, Amount, Description, Source)          headers row 4, data from row 5
+// Expense: E–I (Date, Amount, Description, Type, Category)   headers row 4, data from row 5
 //
-// Anchoring the append range to start at row 5 (e.g. A5:D instead of A:D)
-// tells Google Sheets to only look for empty rows from row 5 downward,
-// expanding the sheet automatically if needed. Income and expense sections
-// are tracked independently via their separate anchor columns.
+// Google Sheets values.append with INSERT_ROWS ignores column anchoring and
+// always inserts at column A regardless of the range start column.
+// Fix: manually find the next empty row in the correct anchor column (A for
+// income, E for expenses) from row 5 downward, then use values.update to
+// write to the exact cell range. This guarantees expenses always land in E–I.
 
 async function appendToSheet(
   tab:         string,
@@ -319,56 +303,56 @@ async function appendToSheet(
   const sheets        = getSheetsClient();
   const isIncome      = transaction.type === "income";
 
-  // Income: A–D | Expense: E–I
-  // Anchored at row 5 so append never touches header rows 1–4
-  const anchorCol = isIncome ? "A" : "E";
-  const endCol    = isIncome ? "D" : "I";
+  // Income: A–D  |  Expense: E–I
+  // Scan anchor column from row 5 to find next empty row independently
+  const DATA_START = 5;
+  const anchorCol  = isIncome ? "A" : "E";
+  const endCol     = isIncome ? "D" : "I";
+
+  // Find next empty row by reading existing data in anchor column from row 5
+  const scanRange = `'${tab}'!${anchorCol}${DATA_START}:${anchorCol}`;
+  const scanRes   = await sheets.spreadsheets.values.get({ spreadsheetId, range: scanRange });
+  const filled    = (scanRes.data.values ?? []).length;
+  const nextRow   = DATA_START + filled;
 
   const row: (string | number)[] = isIncome
     ? [transaction.date, transaction.amount, transaction.description, transaction.source ?? ""]
     : [transaction.date, transaction.amount, transaction.description, transaction.expenseType ?? "", transaction.category ?? ""];
 
-  const appendRes = await sheets.spreadsheets.values.append({
+  // Use update (not append) to write to the exact column range
+  await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range:            `'${tab}'!${anchorCol}5:${endCol}`,
+    range:            `'${tab}'!${anchorCol}${nextRow}:${endCol}${nextRow}`,
     valueInputOption: "USER_ENTERED",
-    insertDataOption: "INSERT_ROWS",
     requestBody:      { values: [row] },
   });
 
-  // Parse written row number from response e.g. "June 2026!A7:D7" → 7
-  const updatedRange = appendRes.data.updates?.updatedRange ?? "";
-  const rowMatch     = updatedRange.match(/(\d+):\w+\d+$/);
-  const nextRow      = rowMatch ? parseInt(rowMatch[1], 10) : 0;
-
   // Attach Drive receipt link as a cell note on the Date cell
-  if (nextRow > 0) {
-    const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
-    const sheetId   = sheetMeta.data.sheets?.find(
-      (s) => s.properties?.title === tab
-    )?.properties?.sheetId;
+  const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
+  const sheetId   = sheetMeta.data.sheets?.find(
+    (s) => s.properties?.title === tab
+  )?.properties?.sheetId;
 
-    if (sheetId !== undefined) {
-      const colIndex = isIncome ? 0 : 4; // A=0, E=4
-      await sheets.spreadsheets.batchUpdate({
-        spreadsheetId,
-        requestBody: {
-          requests: [{
-            updateCells: {
-              range: {
-                sheetId,
-                startRowIndex:    nextRow - 1,
-                endRowIndex:      nextRow,
-                startColumnIndex: colIndex,
-                endColumnIndex:   colIndex + 1,
-              },
-              rows:   [{ values: [{ note: `Receipt: ${driveLink}` }] }],
-              fields: "note",
+  if (sheetId !== undefined) {
+    const colIndex = isIncome ? 0 : 4; // A=0, E=4
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          updateCells: {
+            range: {
+              sheetId,
+              startRowIndex:    nextRow - 1,
+              endRowIndex:      nextRow,
+              startColumnIndex: colIndex,
+              endColumnIndex:   colIndex + 1,
             },
-          }],
-        },
-      });
-    }
+            rows:   [{ values: [{ note: `Receipt: ${driveLink}` }] }],
+            fields: "note",
+          },
+        }],
+      },
+    });
   }
 
   return nextRow;
@@ -379,28 +363,25 @@ async function appendToSheet(
 export async function addTransaction(
   r2Key:      string,
   monthYear?: string,
-  overrides?: TransactionOverrides
+  overrides?: TransactionOverrides,
+  note?:      string
 ): Promise<string> {
-  // Download from R2 to a local temp file for OCR
   const tmpDir    = os.tmpdir();
   const localPath = await downloadFromR2(r2Key, tmpDir);
 
   try {
     const settings  = await readSettings();
-    let transaction = await ocrReceipt(localPath, settings);
+    let transaction = await ocrReceipt(localPath, settings, note);
 
     if (overrides) {
       transaction = { ...transaction, ...overrides } as ParsedTransaction;
     }
 
-    const tab = tabNameFromString(monthYear);
-
-    // Upload to Drive — confirmed link comes back before we delete anything
+    const tab       = tabNameFromString(monthYear);
     const driveLink = await uploadReceiptToDrive(localPath, transaction.date);
 
-    // Both Drive upload and sheet write succeeded — safe to clean up
-    fs.unlinkSync(localPath);          // remove temp file
-    await deleteFromR2(r2Key);         // remove from R2 (now in Drive permanently)
+    fs.unlinkSync(localPath);
+    await deleteFromR2(r2Key);
 
     const row = await appendToSheet(tab, transaction, driveLink);
 
@@ -425,16 +406,11 @@ export async function addTransaction(
     return lines.join("\n");
 
   } catch (err) {
-    // Clean up temp file on error — R2 file is preserved as backup
     if (fs.existsSync(localPath)) fs.unlinkSync(localPath);
     throw err;
   }
 }
 
-/**
- * Process all pending receipts in R2.
- * Downloads each, OCRs, uploads to Drive, logs to sheet, deletes from R2.
- */
 export async function processAllReceipts(monthYear?: string): Promise<string> {
   const pending = await listR2Receipts();
 
@@ -446,11 +422,10 @@ export async function processAllReceipts(monthYear?: string): Promise<string> {
   let succeeded = 0;
   let failed    = 0;
 
-  for (const { key, filename } of pending) {
+  for (const { key, filename, note } of pending) {
     try {
-      const result = await addTransaction(key, monthYear);
+      const result = await addTransaction(key, monthYear, undefined, note);
       lines.push(`✅ ${filename}`);
-      // Extract just the row/tab line from the result for brevity
       const summary = result.split("\n").find(l => l.startsWith("✅"));
       if (summary) lines.push(`   ${summary.replace("✅ ", "")}`);
       lines.push("");
@@ -480,9 +455,11 @@ export async function listPendingReceipts(): Promise<string> {
     "",
   ];
 
-  pending.forEach(({ filename, folder }, i) => {
+  pending.forEach(({ key, filename, folder, note }, i) => {
     lines.push(`  ${i + 1}. ${filename}`);
+    lines.push(`     Key:    ${key}`);
     lines.push(`     Folder: ${folder}`);
+    if (note) lines.push(`     Note:   ${note}`);
   });
 
   return lines.join("\n");

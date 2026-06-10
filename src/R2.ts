@@ -8,7 +8,7 @@
  *   receipts/2026/June 2026/receipt_2026-06-09_abc123.jpg
  */
 
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command, HeadObjectCommand } from "@aws-sdk/client-s3";
 import * as fs from "fs";
 import * as path from "path";
 import { Readable } from "stream";
@@ -59,7 +59,8 @@ export function buildR2Key(filename: string, date: string): string {
 export async function uploadToR2(
   localPath: string,
   filename:  string,
-  date:      string
+  date:      string,
+  note?:     string
 ): Promise<string> {
   const client   = getR2Client();
   const bucket   = getBucketName();
@@ -76,6 +77,8 @@ export async function uploadToR2(
     Key:         key,
     Body:        body,
     ContentType: mimeType,
+    // Store note as object metadata — retrieved when MCP lists receipts
+    ...(note ? { Metadata: { note } } : {}),
   }));
 
   return key;
@@ -119,7 +122,7 @@ export async function deleteFromR2(key: string): Promise<void> {
  * List all pending receipt files in R2 under the receipts/ prefix.
  * Returns array of { key, filename, folder } objects.
  */
-export async function listR2Receipts(): Promise<{ key: string; filename: string; folder: string }[]> {
+export async function listR2Receipts(): Promise<{ key: string; filename: string; folder: string; note?: string }[]> {
   const client = getR2Client();
   const bucket = getBucketName();
 
@@ -128,13 +131,25 @@ export async function listR2Receipts(): Promise<{ key: string; filename: string;
     Prefix: "receipts/",
   }));
 
-  return (res.Contents ?? [])
-    .filter((obj) => obj.Key)
-    .map((obj) => {
+  const objects = (res.Contents ?? []).filter((obj) => obj.Key);
+
+  // Fetch metadata for each object to retrieve note if present
+  const results = await Promise.all(
+    objects.map(async (obj) => {
       const key      = obj.Key!;
       const parts    = key.split("/");
       const filename = parts[parts.length - 1];
       const folder   = parts.slice(0, -1).join("/");
-      return { key, filename, folder };
-    });
+
+      try {
+        const head = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+        const note = head.Metadata?.["note"];
+        return { key, filename, folder, ...(note ? { note } : {}) };
+      } catch {
+        return { key, filename, folder };
+      }
+    })
+  );
+
+  return results;
 }

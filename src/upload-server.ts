@@ -98,20 +98,23 @@ app.post(
 
     const localPath = req.file.path;
     const filename  = req.file.filename;
+    const note = typeof req.body?.note === "string" && req.body.note.trim().length > 0 ? req.body.note.trim() : undefined;
 
     // Use today's date for R2 folder path since we don't OCR here
     const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
 
     try {
       // Upload to R2 — local file stays as backup regardless of outcome
-      const r2Key = await uploadToR2(localPath, filename, today);
+      // If a note was provided, store it as R2 object metadata so the MCP can read it
+      const r2Key = await uploadToR2(localPath, filename, today, note);
 
-      console.log(`[upload] ${filename} (${(req.file.size / 1024).toFixed(1)} KB) → R2: ${r2Key}`);
+      console.log(`[upload] ${filename} (${(req.file.size / 1024).toFixed(1)} KB) → R2: ${r2Key}${note ? ` | note: "${note}"` : ""}`);
 
       res.json({
         success:  true,
         filename,
         r2Key,
+        note,
         message: "Receipt saved locally and uploaded to R2. Ask Claude Code to process it when ready.",
       });
     } catch (err) {

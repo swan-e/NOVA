@@ -288,10 +288,10 @@ async function uploadReceiptToDrive(filePath: string, date: string): Promise<str
 // Income:  A–D (Date, Amount, Description, Source)          headers row 4, data from row 5
 // Expense: E–I (Date, Amount, Description, Type, Category)   headers row 4, data from row 5
 //
-// Google-recommended padding approach: always append to column A with
-// INSERT_ROWS, but prepend 4 empty strings for expenses so the data lands
-// in columns E–I. Income gets no padding (writes A–D directly).
-// Sheet expands automatically. One API call, no scanning needed.
+// Scans anchor column to find the next empty row from row 5, then writes with
+// values.update to the exact range. Never inserts rows so existing formatting,
+// row highlights, and dropdowns on all rows are fully preserved.
+// appendDimension adds exactly 1 row only when the sheet is full.
 
 async function appendToSheet(
   tab:         string,
@@ -302,65 +302,67 @@ async function appendToSheet(
   const sheets        = getSheetsClient();
   const isIncome      = transaction.type === "income";
 
-  const incomeRow: (string | number)[] = [
-    transaction.date,
-    transaction.amount,
-    transaction.description,
-    transaction.source ?? "",
-  ];
+  const anchorCol  = isIncome ? "A" : "E";
+  const endCol     = isIncome ? "D" : "I";
+  const DATA_START = 5;
 
-  const expenseRow: (string | number)[] = [
-    "", "", "", "",                    // pad A–D so data lands at E–I
-    transaction.date,
-    transaction.amount,
-    transaction.description,
-    transaction.expenseType ?? "",
-    transaction.category ?? "",
-  ];
-
-  const row = isIncome ? incomeRow : expenseRow;
-
-  const appendRes = await sheets.spreadsheets.values.append({
+  // Scan anchor column from row 5 to find next empty row
+  const scanRes = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range:            `'${tab}'!A5`,
+    range: `'${tab}'!${anchorCol}${DATA_START}:${anchorCol}`,
+  });
+  const filled  = (scanRes.data.values ?? []).length;
+  const nextRow = DATA_START + filled;
+
+  // Get sheet metadata — used for expansion check and cell note
+  const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
+  const sheetProp = sheetMeta.data.sheets?.find((s) => s.properties?.title === tab);
+  const sheetId   = sheetProp?.properties?.sheetId;
+  const rowCount  = sheetProp?.properties?.gridProperties?.rowCount ?? 0;
+
+  // Add exactly 1 row if sheet is full — never shifts or displaces existing rows
+  if (nextRow > rowCount && sheetId !== undefined) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{ appendDimension: { sheetId, dimension: "ROWS", length: 1 } }],
+      },
+    });
+  }
+
+  // Write to exact column range — income at A–D, expense at E–I
+  const row: (string | number)[] = isIncome
+    ? [transaction.date, transaction.amount, transaction.description, transaction.source ?? ""]
+    : [transaction.date, transaction.amount, transaction.description, transaction.expenseType ?? "", transaction.category ?? ""];
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range:            `'${tab}'!${anchorCol}${nextRow}:${endCol}${nextRow}`,
     valueInputOption: "USER_ENTERED",
-    insertDataOption: "INSERT_ROWS",
     requestBody:      { values: [row] },
   });
 
-  // Parse written row number from response e.g. "June 2026!A7:I7" → 7
-  const updatedRange = appendRes.data.updates?.updatedRange ?? "";
-  const rowMatch     = updatedRange.match(/(\d+):/);
-  const nextRow      = rowMatch ? parseInt(rowMatch[1], 10) : 0;
-
-  // Attach Drive receipt link as a cell note on the correct Date cell
-  if (nextRow > 0) {
-    const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
-    const sheetId   = sheetMeta.data.sheets?.find(
-      (s) => s.properties?.title === tab
-    )?.properties?.sheetId;
-
-    if (sheetId !== undefined) {
-      const colIndex = isIncome ? 0 : 4; // A=0, E=4
-      await sheets.spreadsheets.batchUpdate({
-        spreadsheetId,
-        requestBody: {
-          requests: [{
-            updateCells: {
-              range: {
-                sheetId,
-                startRowIndex:    nextRow - 1,
-                endRowIndex:      nextRow,
-                startColumnIndex: colIndex,
-                endColumnIndex:   colIndex + 1,
-              },
-              rows:   [{ values: [{ note: `Receipt: ${driveLink}` }] }],
-              fields: "note",
+  // Attach Drive receipt link as a cell note on the Date cell
+  if (sheetId !== undefined) {
+    const colIndex = isIncome ? 0 : 4; // A=0, E=4
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          updateCells: {
+            range: {
+              sheetId,
+              startRowIndex:    nextRow - 1,
+              endRowIndex:      nextRow,
+              startColumnIndex: colIndex,
+              endColumnIndex:   colIndex + 1,
             },
-          }],
-        },
-      });
-    }
+            rows:   [{ values: [{ note: `Receipt: ${driveLink}` }] }],
+            fields: "note",
+          },
+        }],
+      },
+    });
   }
 
   return nextRow;

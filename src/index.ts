@@ -49,7 +49,7 @@ import {
 
 import { addJobApplication, editJobApplication } from "./tools/jobs";
 
-import { addTransaction, getFinanceSettings, listPendingReceipts } from "./tools/finance";
+import { addTransaction, processAllReceipts, getFinanceSettings, listPendingReceipts } from "./tools/finance";
 import type { TransactionOverrides } from "./tools/finance";
 
 import { addLifestyleOverride } from "./lib/config";
@@ -584,10 +584,11 @@ server.tool(
 
 server.tool(
   "finance_add_transaction",
-  "Upload a receipt photo or PDF invoice, OCR it, and append it to the transactions sheet. Defaults to current month tab unless monthYear is specified.",
+  "Download a receipt from R2, OCR it, and append to the transactions sheet. Defaults to current month unless monthYear is specified.",
   {
-    filePath:  z.string().describe("Absolute path to the receipt image (JPG/PNG/WEBP) or PDF."),
+    r2Key:     z.string().describe("R2 object key from finance_list_receipts e.g. receipts/2026/June 2026/receipt_xxx.jpg"),
     monthYear: z.string().optional().describe('Override target month tab e.g. "June 2026". Defaults to current month.'),
+    note:      z.string().optional().describe('Context hint for OCR e.g. "income from side hustle" or "Venmo transfer received". Overrides automatic classification.'),
     overrides: z.object({
       date:        z.string().optional().describe("Override parsed date (YYYY-MM-DD)"),
       amount:      z.number().optional().describe("Override parsed amount"),
@@ -598,8 +599,30 @@ server.tool(
       category:    z.string().optional().describe("Category override (expense only)"),
     }).optional().describe("Manually override any OCR-parsed fields before writing to the sheet."),
   },
-  async ({ filePath, monthYear, overrides }) => {
-    const text = await addTransaction(filePath, monthYear, overrides as TransactionOverrides);
+  async ({ r2Key, monthYear, note, overrides }) => {
+    const text = await addTransaction(r2Key, monthYear, overrides as TransactionOverrides | undefined, note);
+    return { content: [{ type: "text" as const, text }] };
+  }
+);
+
+server.tool(
+  "finance_process_all",
+  "Process all pending receipts in R2 — downloads each, OCRs, uploads to Drive, logs to sheet, deletes from R2.",
+  {
+    monthYear: z.string().optional().describe('Override month for all receipts e.g. "June 2026". Defaults to current month.'),
+  },
+  async ({ monthYear }) => {
+    const text = await processAllReceipts(monthYear);
+    return { content: [{ type: "text" as const, text }] };
+  }
+);
+
+server.tool(
+  "finance_list_receipts",
+  "List all unprocessed receipt files waiting in R2. Call this before finance_add_transaction to get the r2Key.",
+  {},
+  async () => {
+    const text = await listPendingReceipts();
     return { content: [{ type: "text" as const, text }] };
   }
 );
@@ -610,16 +633,6 @@ server.tool(
   {},
   async () => {
     const text = await getFinanceSettings();
-    return { content: [{ type: "text" as const, text }] };
-  }
-);
-
-server.tool(
-  "finance_list_receipts",
-  "List all unprocessed receipt files waiting in the receipts folder.",
-  {},
-  async () => {
-    const text = await listPendingReceipts();
     return { content: [{ type: "text" as const, text }] };
   }
 );

@@ -6,7 +6,7 @@ import type { drive_v3 } from "@googleapis/drive";
 import * as fs from "fs";
 import * as path from "path";
 import { loadProfile, getGoogleAuth } from "../lib/profiles.js";
-import { listR2Receipts, downloadFromR2, deleteFromR2 } from "./r2.js";
+import { listR2Receipts, downloadFromR2, deleteFromR2 } from "../R2.js";
 import * as os from "os";
 
 // ─── Types ────────────────────────────────────────────────────────────────────

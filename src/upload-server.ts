@@ -1,11 +1,11 @@
 /**
  * upload-server.ts
  *
- * Lightweight Express server that accepts receipt photo/PDF uploads
- * and saves them to the shared receipts/ folder for MCP processing.
+ * Lightweight Express server that accepts receipt photo/PDF uploads.
+ * - Saves to local /app/receipts as backup
+ * - Uploads to Cloudflare R2 for MCP access
  *
  * No AI, no tokens — just a secure file drop.
- *
  * Auth: X-Upload-Key header must match UPLOAD_SECRET_KEY in .env
  */
 
@@ -14,6 +14,7 @@ import multer from "multer";
 import * as path from "path";
 import * as fs from "fs";
 import * as crypto from "crypto";
+import { uploadToR2 } from "./R2.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -26,32 +27,30 @@ if (!SECRET_KEY) {
   process.exit(1);
 }
 
-// Ensure receipts directory exists
 fs.mkdirSync(RECEIPTS_DIR, { recursive: true });
 
-// ─── Multer (file handling) ───────────────────────────────────────────────────
+// ─── Multer ───────────────────────────────────────────────────────────────────
 
 const ALLOWED_TYPES: Record<string, string> = {
-  "image/jpeg": ".jpg",
-  "image/png":  ".png",
-  "image/webp": ".webp",
+  "image/jpeg":      ".jpg",
+  "image/png":       ".png",
+  "image/webp":      ".webp",
   "application/pdf": ".pdf",
 };
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, RECEIPTS_DIR),
   filename:    (_req, file, cb) => {
-    // Timestamp + random suffix to avoid collisions
-    const ts     = new Date().toISOString().replace(/[:.]/g, "-");
-    const rand   = crypto.randomBytes(4).toString("hex");
-    const ext    = ALLOWED_TYPES[file.mimetype] ?? path.extname(file.originalname);
+    const ts   = new Date().toISOString().replace(/[:.]/g, "-");
+    const rand = crypto.randomBytes(4).toString("hex");
+    const ext  = ALLOWED_TYPES[file.mimetype] ?? path.extname(file.originalname);
     cb(null, `receipt_${ts}_${rand}${ext}`);
   },
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB max
+  limits:     { fileSize: 20 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (ALLOWED_TYPES[file.mimetype]) {
       cb(null, true);
@@ -65,17 +64,13 @@ const upload = multer({
 
 const app = express();
 
-// ── Auth middleware ───────────────────────────────────────────────────────────
+// ── Auth ──────────────────────────────────────────────────────────────────────
 
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const provided = req.headers["x-upload-key"];
-  // Constant-time comparison to prevent timing attacks
   if (
     typeof provided !== "string" ||
-    !crypto.timingSafeEqual(
-      Buffer.from(provided),
-      Buffer.from(SECRET_KEY as string)
-    )
+    !crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(SECRET_KEY as string))
   ) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -83,32 +78,55 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-// ── Health check (no auth — used by Docker and Cloudflare) ───────────────────
+// ── Health check ──────────────────────────────────────────────────────────────
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-// ── Upload endpoint ───────────────────────────────────────────────────────────
+// ── Upload ────────────────────────────────────────────────────────────────────
 
 app.post(
   "/upload",
   requireAuth,
   upload.single("receipt"),
-  (req: Request, res: Response) => {
+  async (req: Request, res: Response) => {
     if (!req.file) {
       res.status(400).json({ error: "No file received." });
       return;
     }
 
-    console.log(`[upload] ${req.file.filename} (${(req.file.size / 1024).toFixed(1)} KB)`);
+    const localPath = req.file.path;
+    const filename  = req.file.filename;
 
-    res.json({
-      success:  true,
-      filename: req.file.filename,
-      path:     `/app/receipts/${req.file.filename}`,
-      message:  "Receipt saved. Ask Claude Code to process it when ready.",
-    });
+    // Use today's date for R2 folder path since we don't OCR here
+    const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+
+    try {
+      // Upload to R2 — local file stays as backup regardless of outcome
+      const r2Key = await uploadToR2(localPath, filename, today);
+
+      console.log(`[upload] ${filename} (${(req.file.size / 1024).toFixed(1)} KB) → R2: ${r2Key}`);
+
+      res.json({
+        success:  true,
+        filename,
+        r2Key,
+        message: "Receipt saved locally and uploaded to R2. Ask Claude Code to process it when ready.",
+      });
+    } catch (err) {
+      // R2 upload failed — local backup still exists, don't lose the file
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[upload] R2 upload failed for ${filename}: ${msg}`);
+      console.error(`[upload] Local backup preserved at: ${localPath}`);
+
+      res.status(500).json({
+        error:    "R2 upload failed — file saved locally as backup.",
+        filename,
+        localPath,
+        details:  msg,
+      });
+    }
   }
 );
 
@@ -123,5 +141,5 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
 app.listen(PORT, () => {
   console.log(`Receipt upload server running on port ${PORT}`);
-  console.log(`Saving files to: ${RECEIPTS_DIR}`);
+  console.log(`Local backup dir: ${RECEIPTS_DIR}`);
 });

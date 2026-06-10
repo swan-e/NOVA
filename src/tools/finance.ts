@@ -174,7 +174,7 @@ JSON shape:
 
 Rules:
 - Default to "expense". Only use "income" for pay stubs, bank transfers received, Venmo/Zelle received, refunds.
-- User note above overrides your classification if it specifies income/expense or source.
+- User note above overrides ANY parsed field it mentions — amount, date, description, type, source, category, expenseType. Always trust the note over the receipt.
 - Restaurants/takeout/food delivery = expense, Want. Groceries/supermarket = expense, Need.
 - Needs: rent, groceries, utilities, medical, transport to work. Savings: investment/savings transfers. All else: Want.
 - Income has no category (null). Expenses need category + expenseType.

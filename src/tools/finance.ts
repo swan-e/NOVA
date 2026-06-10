@@ -6,6 +6,8 @@ import type { drive_v3 } from "@googleapis/drive";
 import * as fs from "fs";
 import * as path from "path";
 import { loadProfile, getGoogleAuth } from "../lib/profiles.js";
+import { listR2Receipts, downloadFromR2, deleteFromR2 } from "./r2.js";
+import * as os from "os";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -102,17 +104,6 @@ function tabNameFromString(monthYear?: string): string {
     `Could not parse month/year from "${monthYear}". ` +
     `Use formats like "June 2026", "06/2026", or "2026-06".`
   );
-}
-
-async function findNextEmptyRow(
-  tab: string,
-  startRow: number,
-  col: string
-): Promise<number> {
-  const spreadsheetId = getSpreadsheetId();
-  const range = `'${tab}'!${col}${startRow}:${col}1000`;
-  const res = await getSheetsClient().spreadsheets.values.get({ spreadsheetId, range });
-  return startRow + (res.data.values ?? []).length;
 }
 
 // ─── Settings Reader ──────────────────────────────────────────────────────────
@@ -296,6 +287,8 @@ async function uploadReceiptToDrive(filePath: string, date: string): Promise<str
 }
 
 // ─── Append Row to Sheet ──────────────────────────────────────────────────────
+// Uses values.append instead of values.update so Google Sheets automatically
+// finds the next empty row and expands the sheet if needed — no row limit issues.
 
 async function appendToSheet(
   tab:         string,
@@ -305,49 +298,59 @@ async function appendToSheet(
   const spreadsheetId = getSpreadsheetId();
   const sheets        = getSheetsClient();
   const isIncome      = transaction.type === "income";
-  const startRow      = 5;
-  const anchorCol     = isIncome ? "A" : "E";
-  const endCol        = isIncome ? "D" : "I";
 
-  const nextRow = await findNextEmptyRow(tab, startRow, anchorCol);
+  // Income:  A–D (Date, Amount, Description, Source)
+  // Expense: E–I (Date, Amount, Description, Type, Category)
+  const anchorCol = isIncome ? "A" : "E";
+  const endCol    = isIncome ? "D" : "I";
 
   const row: (string | number)[] = isIncome
     ? [transaction.date, transaction.amount, transaction.description, transaction.source ?? ""]
     : [transaction.date, transaction.amount, transaction.description, transaction.expenseType ?? "", transaction.category ?? ""];
 
-  await sheets.spreadsheets.values.update({
+  // append automatically finds the next empty row after the last data row
+  // and expands the sheet if it hits the row limit
+  const appendRes = await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range:            `'${tab}'!${anchorCol}${nextRow}:${endCol}${nextRow}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody:      { values: [row] },
+    range:                         `'${tab}'!${anchorCol}:${endCol}`,
+    valueInputOption:              "USER_ENTERED",
+    insertDataOption:              "INSERT_ROWS",
+    requestBody:                   { values: [row] },
   });
 
-  // Attach Drive receipt link as a cell note on the Date cell
-  const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
-  const sheetId   = sheetMeta.data.sheets?.find(
-    (s) => s.properties?.title === tab
-  )?.properties?.sheetId;
+  // Parse the row number from the updated range e.g. "June 2026!A6:D6" → 6
+  const updatedRange = appendRes.data.updates?.updatedRange ?? "";
+  const rowMatch     = updatedRange.match(/\d+$/);
+  const nextRow      = rowMatch ? parseInt(rowMatch[0], 10) : 0;
 
-  if (sheetId !== undefined) {
-    const colIndex = isIncome ? 0 : 4; // A=0, E=4
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId,
-      requestBody: {
-        requests: [{
-          updateCells: {
-            range: {
-              sheetId,
-              startRowIndex:    nextRow - 1,
-              endRowIndex:      nextRow,
-              startColumnIndex: colIndex,
-              endColumnIndex:   colIndex + 1,
+  // Attach Drive receipt link as a cell note on the Date cell
+  if (nextRow > 0) {
+    const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheetId   = sheetMeta.data.sheets?.find(
+      (s) => s.properties?.title === tab
+    )?.properties?.sheetId;
+
+    if (sheetId !== undefined) {
+      const colIndex = isIncome ? 0 : 4; // A=0, E=4
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [{
+            updateCells: {
+              range: {
+                sheetId,
+                startRowIndex:    nextRow - 1,
+                endRowIndex:      nextRow,
+                startColumnIndex: colIndex,
+                endColumnIndex:   colIndex + 1,
+              },
+              rows:   [{ values: [{ note: `Receipt: ${driveLink}` }] }],
+              fields: "note",
             },
-            rows:   [{ values: [{ note: `Receipt: ${driveLink}` }] }],
-            fields: "note",
-          },
-        }],
-      },
-    });
+          }],
+        },
+      });
+    }
   }
 
   return nextRow;
@@ -356,46 +359,114 @@ async function appendToSheet(
 // ─── Exported Functions (called by index.ts server.tool registrations) ────────
 
 export async function addTransaction(
-  filePath:   string,
+  r2Key:      string,
   monthYear?: string,
   overrides?: TransactionOverrides
 ): Promise<string> {
-  const settings  = await readSettings();
-  let transaction = await ocrReceipt(filePath, settings);
+  // Download from R2 to a local temp file for OCR
+  const tmpDir    = os.tmpdir();
+  const localPath = await downloadFromR2(r2Key, tmpDir);
 
-  if (overrides) {
-    transaction = { ...transaction, ...overrides } as ParsedTransaction;
+  try {
+    const settings  = await readSettings();
+    let transaction = await ocrReceipt(localPath, settings);
+
+    if (overrides) {
+      transaction = { ...transaction, ...overrides } as ParsedTransaction;
+    }
+
+    const tab = tabNameFromString(monthYear);
+
+    // Upload to Drive — confirmed link comes back before we delete anything
+    const driveLink = await uploadReceiptToDrive(localPath, transaction.date);
+
+    // Both Drive upload and sheet write succeeded — safe to clean up
+    fs.unlinkSync(localPath);          // remove temp file
+    await deleteFromR2(r2Key);         // remove from R2 (now in Drive permanently)
+
+    const row = await appendToSheet(tab, transaction, driveLink);
+
+    const lines: string[] = [
+      `✅ Transaction added to "${tab}" (row ${row})`,
+      ``,
+      `  Type:        ${transaction.type}`,
+      `  Date:        ${transaction.date}`,
+      `  Amount:      $${transaction.amount.toFixed(2)}`,
+      `  Description: ${transaction.description}`,
+    ];
+
+    if (transaction.type === "income") {
+      lines.push(`  Source:       ${transaction.source ?? "—"}`);
+    } else {
+      lines.push(`  Expense type: ${transaction.expenseType ?? "—"}`);
+      lines.push(`  Category:     ${transaction.category ?? "—"}`);
+    }
+
+    lines.push(``, `  Receipt saved to Drive: ${driveLink}`);
+    lines.push(`  Removed from R2 ✓`);
+    return lines.join("\n");
+
+  } catch (err) {
+    // Clean up temp file on error — R2 file is preserved as backup
+    if (fs.existsSync(localPath)) fs.unlinkSync(localPath);
+    throw err;
+  }
+}
+
+/**
+ * Process all pending receipts in R2.
+ * Downloads each, OCRs, uploads to Drive, logs to sheet, deletes from R2.
+ */
+export async function processAllReceipts(monthYear?: string): Promise<string> {
+  const pending = await listR2Receipts();
+
+  if (pending.length === 0) {
+    return "📭 No pending receipts in R2.";
   }
 
-  const tab = tabNameFromString(monthYear);
+  const lines: string[] = [`📬 Processing ${pending.length} receipt(s)...`, ""];
+  let succeeded = 0;
+  let failed    = 0;
 
-  // Upload first — only delete local file after Drive confirms a link back.
-  // If upload throws, the local file is untouched and the error propagates.
-  const driveLink = await uploadReceiptToDrive(filePath, transaction.date);
+  for (const { key, filename } of pending) {
+    try {
+      const result = await addTransaction(key, monthYear);
+      lines.push(`✅ ${filename}`);
+      // Extract just the row/tab line from the result for brevity
+      const summary = result.split("\n").find(l => l.startsWith("✅"));
+      if (summary) lines.push(`   ${summary.replace("✅ ", "")}`);
+      lines.push("");
+      succeeded++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      lines.push(`❌ ${filename}: ${msg}`);
+      lines.push("");
+      failed++;
+    }
+  }
 
-  // Drive upload confirmed — safe to remove local copy now
-  fs.unlinkSync(filePath);
+  lines.push(`─────────────────────────`);
+  lines.push(`Processed: ${succeeded} succeeded, ${failed} failed`);
+  return lines.join("\n");
+}
 
-  const row = await appendToSheet(tab, transaction, driveLink);
+export async function listPendingReceipts(): Promise<string> {
+  const pending = await listR2Receipts();
+
+  if (pending.length === 0) {
+    return "📭 No pending receipts in R2.";
+  }
 
   const lines: string[] = [
-    `✅ Transaction added to "${tab}" (row ${row})`,
-    ``,
-    `  Type:        ${transaction.type}`,
-    `  Date:        ${transaction.date}`,
-    `  Amount:      $${transaction.amount.toFixed(2)}`,
-    `  Description: ${transaction.description}`,
+    `📁 ${pending.length} pending receipt(s) in R2:`,
+    "",
   ];
 
-  if (transaction.type === "income") {
-    lines.push(`  Source:       ${transaction.source ?? "—"}`);
-  } else {
-    lines.push(`  Expense type: ${transaction.expenseType ?? "—"}`);
-    lines.push(`  Category:     ${transaction.category ?? "—"}`);
-  }
+  pending.forEach(({ filename, folder }, i) => {
+    lines.push(`  ${i + 1}. ${filename}`);
+    lines.push(`     Folder: ${folder}`);
+  });
 
-  lines.push(``, `  Receipt saved to Drive: ${driveLink}`);
-  lines.push(`  Local file deleted ✓`);
   return lines.join("\n");
 }
 

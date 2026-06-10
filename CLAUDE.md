@@ -7,14 +7,15 @@ Read this before every session. Never guess — follow these rules exactly.
 
 ## Core Mental Model
 
-| Concept   | System         | Tools to use               |
-|-----------|----------------|----------------------------|
-| **Tasks** | Notion         | `notion_*`                 |
-| **Events** | Google Calendar | `calendar_*`              |
-| **Schedule reads** | Both | `notion_week_tasks` + `calendar_list_upcoming` (always both, merged) |
-| **Email** | Gmail          | `gmail_*`                  |
-| **Notes** | Obsidian       | `obsidian_*`               |
-| **Job applications** | Google Sheets | `jobs_*`          |
+| Concept              | System              | Tools to use                          |
+|----------------------|---------------------|---------------------------------------|
+| **Tasks**            | Notion              | `notion_*`                            |
+| **Events**           | Google Calendar     | `calendar_*`                          |
+| **Schedule reads**   | Both                | `notion_week_tasks` + `calendar_list_upcoming` (always both, merged) |
+| **Email**            | Gmail               | `gmail_*`                             |
+| **Notes**            | Obsidian            | `obsidian_*`                          |
+| **Job applications** | Google Sheets       | `jobs_*`                              |
+| **Finances**         | Google Sheets       | `finance_*`                           |
 
 ---
 
@@ -48,7 +49,6 @@ Read this before every session. Never guess — follow these rules exactly.
 ### "Move X to Y time" / "Change the title of X" / "Update my event"
 → `calendar_update_event` — only provide the fields being changed, all others are preserved
 → Always get the event ID first via `calendar_today` or `calendar_list_upcoming` before updating
-→ **Gmail** — use `gmail_triage`, `gmail_delete_by_sender`, `gmail_delete_by_company`
 
 ### "Write a note" / "Save this to Obsidian" / "Add to my daily note"
 → **Obsidian** — use `obsidian_write` or `obsidian_append_daily`
@@ -69,6 +69,18 @@ Read this before every session. Never guess — follow these rules exactly.
 → Only send the fields being changed — all others are preserved from the existing row
 → Always ask for sheetName if not specified
 
+### "Add this receipt" / "Log this expense" / "I spent X" / "Upload receipt"
+→ **Finance** — use `finance_add_transaction`
+→ **Always default to current month tab** unless user specifies a different month
+→ Call `finance_get_settings` first if unsure which category/source/type to use
+→ If user provides a file path, pass it directly — do not modify the path
+
+### "What receipts are pending" / "What's in the receipts folder"
+→ **Finance** — use `finance_list_receipts`
+
+### "What are my categories" / "What income sources do I have" / "Show finance settings"
+→ **Finance** — use `finance_get_settings`
+
 ---
 
 ## Word Mappings
@@ -88,6 +100,9 @@ These words mean a job application log entry — use `jobs_add_application`:
 These words mean editing an existing job row — use `jobs_edit_application`:
 - "update job", "edit application", "change status", "mark as blocked", "mark as in progress", "update my application"
 
+These words mean a finance transaction — use `finance_add_transaction`:
+- "receipt", "expense", "I spent", "I paid", "log this purchase", "add transaction", "upload receipt"
+
 ---
 
 ## Available Tools (full list)
@@ -99,21 +114,14 @@ These words mean editing an existing job row — use `jobs_edit_application`:
 - `gmail_delete_by_company` — trash all matching a company name
 - `gmail_summarize` — raw email text for summarization
 
-→ **Display format for all schedule output:**
-  - Always show time ranges: "3:00 PM – 4:30 PM" not "3:00 PM"
-  - If end time unknown: "3:00 PM – ?"
-  - Use three columns when tabling: Time Range | Event/Task | Type
-  - Sort all items chronologically regardless of source
-  - Never answer a schedule question from only one source
-
 ### Google Calendar
 - `calendar_today` — **full day view**, all events midnight to midnight (use for "today's schedule", "full day")
 - `calendar_list_upcoming` — events from now forward only (use for "what's next", "what's coming up")
 - `calendar_update_event` — update title, time, description, or location of an existing event (requires event ID)
+- `calendar_create_event` — create a single event
 - `calendar_create_batch` — create multiple events
 - `calendar_delete_event` — delete event by name
 - `calendar_delete_batch` — delete multiple events
-- `calendar_list_upcoming` — list upcoming events (Google Calendar direct)
 - `calendar_list_calendars` — list all sub-calendars
 - `calendar_week_summary` — full week dashboard with free time analysis
 
@@ -136,26 +144,48 @@ These words mean editing an existing job row — use `jobs_edit_application`:
 ### Jobs
 - `jobs_add_application` — log a new job application row to Google Sheets
   - Required: `job` (title), `company`, `sheetName` (e.g. "SWE", "Internships")
-  - Optional: `status` (Completed/Blocked/In Progress/Not Started), `submissionPlatform`, `location`, `completionDate` (MM/DD/YYYY), `website`, `salary`, `profile`
+  - Optional: `status`, `submissionPlatform`, `location`, `completionDate` (MM/DD/YYYY), `website`, `salary`, `profile`
   - Defaults: status → "Completed", submissionPlatform → "Company Website", completionDate → today, profile → "work"
 
 - `jobs_edit_application` — edit an existing job application row in Google Sheets
   - Required: `findCompany`, `sheetName`
-  - Optional: `findJob` (narrow search), any field to update: `job`, `company`, `status`, `submissionPlatform`, `location`, `completionDate`, `website`, `salary`, `profile`
+  - Optional: `findJob` (narrow search), any field to update
   - Only fields you provide will be changed — all others stay as-is
 
-### Finance Tool
-- `finance_add_transaction` — OCRs a receipt and appends to the transactions sheet
-  - **Always default to the current month tab unless the user explicitly specifies a different month**
-  - Current month tab is always named as the full month name + year e.g. "June 2026"
-  - Pass `monthYear` only when the user says something like "add this to March" or "this was from last month"
-  - Expenses go to columns E–I, income to columns A–D
+### Finance
+- `finance_add_transaction` — OCR a receipt photo or PDF and append to the transactions sheet
+  - **Always default to current month tab** unless user explicitly specifies a different month
+  - Current month tab format: full month name + year e.g. "June 2026"
+  - Pass `monthYear` only when user says "add this to March" or "this was from last month"
+  - Expenses → columns E–I, Income → columns A–D
   - Supported file types: JPG, PNG, WEBP, PDF
-- `finance_get_settings` — lists available categories, income sources, and expense types from the Settings sheet. Call this if unsure which category/source/type to suggest when a user adds a transaction manually.
-- Spreadsheet: personal Gmail account (separate from jobs sheet)
+  - File path is the absolute path on the server e.g. `/app/receipts/receipt_2026-06-09.jpg`
+
+- `finance_list_receipts` — list all unprocessed receipt files waiting in `/app/receipts/`
+  - Call this before processing to see what's pending
+  - Use returned filenames to build the full path for `finance_add_transaction`
+
+- `finance_get_settings` — read current dropdown options from the Settings sheet
+  - Call this if unsure which category/source/type to use for a transaction
+  - Shows all valid values for Category, Source (income), and Type (expense)
 
 ### Config
 - `config_update_lifestyle` — update sleep or meal schedule overrides
+
+---
+
+## Display Format
+
+→ **Schedule output:**
+  - Always show time ranges: "3:00 PM – 4:30 PM" not "3:00 PM"
+  - If end time unknown: "3:00 PM – ?"
+  - Use three columns when tabling: Time Range | Event/Task | Type
+  - Sort all items chronologically regardless of source
+  - Never answer a schedule question from only one source
+
+→ **Finance output:**
+  - Always confirm tab name, row number, and Drive link after adding a transaction
+  - If OCR parsed fields seem wrong, show them and ask user to confirm before writing
 
 ---
 
@@ -174,3 +204,5 @@ These words mean editing an existing job row — use `jobs_edit_application`:
 6. When a time is specified for a Notion task, always pass it in the `due` field as `YYYY-MM-DDThh:mm:ss` — never put time in the task name.
 7. When logging or editing a job application, always use `jobs_*` tools with profile: "work". Never use Notion tasks for job tracking.
 8. Always ask for `sheetName` when using any `jobs_*` tool if it hasn't been specified.
+9. For finance transactions, always default to the current month. Never ask which month unless the user explicitly mentions a different one.
+10. Always call `finance_list_receipts` before processing receipts so you know exactly which files are pending.

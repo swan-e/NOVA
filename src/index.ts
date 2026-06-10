@@ -49,7 +49,7 @@ import {
 
 import { addJobApplication, editJobApplication } from "./tools/jobs";
 
-import { addTransaction, getFinanceSettings } from "./tools/finance";
+import { addTransaction, getFinanceSettings, listPendingReceipts } from "./tools/finance";
 import type { TransactionOverrides } from "./tools/finance";
 
 import { addLifestyleOverride } from "./lib/config";
@@ -610,6 +610,16 @@ server.tool(
   {},
   async () => {
     const text = await getFinanceSettings();
+    return { content: [{ type: "text" as const, text }] };
+  }
+);
+
+server.tool(
+  "finance_list_receipts",
+  "List all unprocessed receipt files waiting in the receipts folder.",
+  {},
+  async () => {
+    const text = await listPendingReceipts();
     return { content: [{ type: "text" as const, text }] };
   }
 );

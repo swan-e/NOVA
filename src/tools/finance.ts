@@ -368,6 +368,65 @@ async function appendToSheet(
   return nextRow;
 }
 
+// ─── Note Corrections ────────────────────────────────────────────────────────
+// Second LLM pass — applies user note corrections to an already-parsed
+// transaction. Focused prompt with no image, just JSON + note → corrected JSON.
+// Uses the same Haiku model for cost efficiency.
+
+async function applyNoteCorrections(
+  transaction: ParsedTransaction,
+  note:        string,
+  settings:    SheetSettings
+): Promise<ParsedTransaction> {
+  const anthropic = new Anthropic();
+
+  const prompt = `You parsed a receipt into this transaction JSON:
+${JSON.stringify(transaction, null, 2)}
+
+The user added this note: "${note}"
+
+Apply any corrections the note specifies to the JSON. The note may correct any field:
+amount, date, description, type (income/expense), source, expenseType, category.
+
+Available categories: ${settings.categories.join(", ")}
+Available income sources: ${settings.incomeSources.join(", ")}
+Available expense types: ${settings.expenseTypes.join(", ")}
+
+Return ONLY the corrected JSON with the same shape. If the note doesn't correct a field, keep the original value.`;
+
+  const response = await anthropic.messages.create({
+    model:      "claude-haiku-4-5-20251001",
+    max_tokens: 256,
+    messages:   [{ role: "user", content: prompt }],
+  });
+
+  type TextBlock = { type: "text"; text: string };
+  const isTextBlock = (b: unknown): b is TextBlock =>
+    typeof b === "object" && b !== null &&
+    (b as Record<string, unknown>).type === "text" &&
+    typeof (b as Record<string, unknown>).text === "string";
+
+  const raw = (response.content as unknown[])
+    .filter(isTextBlock)
+    .map((b) => b.text)
+    .join("")
+    .replace(/```json|```/g, "")
+    .trim();
+
+  const corrected = JSON.parse(raw) as ParsedTransaction;
+
+  // Always enforce current year even after corrections
+  if (corrected.date) {
+    const currentYear    = new Date().getFullYear();
+    const [, month, day] = corrected.date.split("-");
+    corrected.date = (month && day)
+      ? `${currentYear}-${month}-${day}`
+      : transaction.date;
+  }
+
+  return corrected;
+}
+
 // ─── Exported Functions (called by index.ts server.tool registrations) ────────
 
 export async function addTransaction(
@@ -382,6 +441,13 @@ export async function addTransaction(
   try {
     const settings  = await readSettings();
     let transaction = await ocrReceipt(localPath, settings, note);
+
+    // If a note was provided, run a second focused LLM pass to apply any
+    // corrections the user specified — more reliable than asking the OCR
+    // model to simultaneously read the image AND apply user corrections
+    if (note) {
+      transaction = await applyNoteCorrections(transaction, note, settings);
+    }
 
     if (overrides) {
       transaction = { ...transaction, ...overrides } as ParsedTransaction;

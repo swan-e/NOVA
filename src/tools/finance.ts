@@ -288,10 +288,10 @@ async function uploadReceiptToDrive(filePath: string, date: string): Promise<str
 // Income:  A–D (Date, Amount, Description, Source)          headers row 4, data from row 5
 // Expense: E–I (Date, Amount, Description, Type, Category)   headers row 4, data from row 5
 //
-// Uses values.append with OVERWRITE (not INSERT_ROWS) anchored at row 5.
-// OVERWRITE respects the column anchor and writes at the next empty row in
-// the specified range — it never shifts content to column A.
-// Google Sheets expands the sheet automatically when the range is exhausted.
+// Google-recommended padding approach: always append to column A with
+// INSERT_ROWS, but prepend 4 empty strings for expenses so the data lands
+// in columns E–I. Income gets no padding (writes A–D directly).
+// Sheet expands automatically. One API call, no scanning needed.
 
 async function appendToSheet(
   tab:         string,
@@ -302,29 +302,38 @@ async function appendToSheet(
   const sheets        = getSheetsClient();
   const isIncome      = transaction.type === "income";
 
-  // Income: A–D  |  Expense: E–I
-  // Anchored at row 5 — headers at row 4 are never touched
-  const anchorCol = isIncome ? "A" : "E";
-  const endCol    = isIncome ? "D" : "I";
+  const incomeRow: (string | number)[] = [
+    transaction.date,
+    transaction.amount,
+    transaction.description,
+    transaction.source ?? "",
+  ];
 
-  const row: (string | number)[] = isIncome
-    ? [transaction.date, transaction.amount, transaction.description, transaction.source ?? ""]
-    : [transaction.date, transaction.amount, transaction.description, transaction.expenseType ?? "", transaction.category ?? ""];
+  const expenseRow: (string | number)[] = [
+    "", "", "", "",                    // pad A–D so data lands at E–I
+    transaction.date,
+    transaction.amount,
+    transaction.description,
+    transaction.expenseType ?? "",
+    transaction.category ?? "",
+  ];
+
+  const row = isIncome ? incomeRow : expenseRow;
 
   const appendRes = await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range:            `'${tab}'!${anchorCol}5:${endCol}`,
+    range:            `'${tab}'!A5`,
     valueInputOption: "USER_ENTERED",
-    insertDataOption: "OVERWRITE",
+    insertDataOption: "INSERT_ROWS",
     requestBody:      { values: [row] },
   });
 
-  // Parse written row number from response e.g. "June 2026!E7:I7" → 7
+  // Parse written row number from response e.g. "June 2026!A7:I7" → 7
   const updatedRange = appendRes.data.updates?.updatedRange ?? "";
-  const rowMatch     = updatedRange.match(/(\d+):\w+\d+$/);
+  const rowMatch     = updatedRange.match(/(\d+):/);
   const nextRow      = rowMatch ? parseInt(rowMatch[1], 10) : 0;
 
-  // Attach Drive receipt link as a cell note on the Date cell
+  // Attach Drive receipt link as a cell note on the correct Date cell
   if (nextRow > 0) {
     const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
     const sheetId   = sheetMeta.data.sheets?.find(

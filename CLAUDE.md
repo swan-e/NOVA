@@ -72,12 +72,14 @@ Read this before every session. Never guess — follow these rules exactly.
 ### "Add this receipt" / "Log this expense" / "I spent X" / "Upload receipt"
 → **Finance** — use `finance_list_receipts` first, then `finance_add_transaction` or `finance_process_all`
 → **Always default to current month tab** unless user specifies a different month
-→ Call `finance_get_settings` first if unsure which category/source/type to use
+→ **Never ask the user for details** — OCR handles everything automatically (type, amount, description, category)
 → Never construct an R2 key manually — always get it from `finance_list_receipts`
+→ Only call `finance_get_settings` if OCR returns empty categories/sources
 
 ### "Process all receipts" / "Process everything pending" / "Log all my receipts"
 → **Finance** — use `finance_process_all`
 → Lists and processes all pending R2 receipts in one call
+→ **Never ask for confirmation before processing** — just run it
 
 ### "What receipts are pending" / "What's in the receipts folder"
 → **Finance** — use `finance_list_receipts`
@@ -166,8 +168,10 @@ These words mean process everything at once — use `finance_process_all`:
   - Pass `monthYear` only when user says "add this to March" or "this was from last month"
   - **Income → columns A–D** (Date, Amount, Description, Source) — headers row 4, data from row 5
   - **Expenses → columns E–I** (Date, Amount, Description, Type, Category) — headers row 4, data from row 5
+  - Income and expense sections are completely independent — appending one never affects the other
   - Pass `r2Key` from `finance_list_receipts` — never construct the key manually
   - Deletes from R2 after confirmed Drive upload
+  - **Never ask the user whether it is income or expense** — OCR determines this from the receipt
 
 - `finance_process_all` — process ALL pending receipts in R2 at once
   - Use this when user says "process all receipts" or "process everything pending"
@@ -221,3 +225,4 @@ These words mean process everything at once — use `finance_process_all`:
 10. Always call `finance_list_receipts` before `finance_add_transaction` to get the r2Key. Never guess or construct R2 keys manually.
 11. For "process all", use `finance_process_all` directly — no need to list first.
 12. Income goes to columns A–D only. Expenses go to columns E–I only. Never mix them.
+13. Never ask the user whether a receipt is income or expense, or for any other receipt details — OCR determines all fields automatically. Only ask if OCR completely fails to parse the receipt.
